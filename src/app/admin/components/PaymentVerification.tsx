@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback, useMemo } from "react";
 import { createClient } from "@/lib/supabase/client";
-import { Filter, Eye, CheckCircle, XCircle, RotateCw, AlertCircle, Download, Users, X } from "lucide-react";
+import { Filter, Eye, CheckCircle, XCircle, RotateCw, AlertCircle, Download, Users, X, Search, ChevronLeft, ChevronRight, ExternalLink } from "lucide-react";
 import { formatBIB, formatBIBCSV, formatFestivalParticipant, formatFestivalParticipantCSV, downloadCSV } from "@/lib/bib";
 import { decrementPromoQuota, rollbackPromoQuotaOnReject } from "@/lib/promo";
 import { formatDisplayWIB } from "@/lib/timeUtils";
@@ -54,8 +54,12 @@ export default function PaymentVerification({ onTransactionUpdated }: PaymentVer
   const [records, setRecords] = useState<UnifiedPaymentRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState("Pending");
+  const [activeSubEvent, setActiveSubEvent] = useState("All");
+  const [search, setSearch] = useState("");
+  const [currentPage, setCurrentPage] = useState(1);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [membersModalRecord, setMembersModalRecord] = useState<UnifiedPaymentRecord | null>(null);
+  const [imagePreview, setImagePreview] = useState<{ url: string; title: string } | null>(null);
 
   const supabase = createClient();
 
@@ -751,15 +755,152 @@ export default function PaymentVerification({ onTransactionUpdated }: PaymentVer
     downloadCSV(`payment_verifications_${new Date().toISOString().split("T")[0]}`, headers, rows);
   };
 
+  // Helper to map any record to a canonical sub-event key
+  const getRecordEventKey = useCallback((r: UnifiedPaymentRecord): string => {
+    const origin = (r.origin_table || "").toLowerCase();
+    const sub = (r.sub_event_type || "").toLowerCase();
+    const src = (r.source_type || "").toLowerCase();
+
+    if (origin === "colorfun_registrations" || sub.includes("colorfun") || sub.includes("cfr") || src.includes("cfr")) {
+      return "ColorFun Run";
+    }
+    if (origin === "festival_registrations" || sub.includes("fest") || src.includes("festival")) {
+      return "Festival";
+    }
+    if (sub.includes("bpc") || src.includes("bpc")) {
+      return "BPC";
+    }
+    if (sub.includes("bcc") || src.includes("bcc")) {
+      return "BCC";
+    }
+    if (sub.includes("seminar") || src.includes("seminar")) {
+      return "Seminar";
+    }
+    if (sub.includes("tenant") || src.includes("tenant")) {
+      return "Tenant";
+    }
+    return r.sub_event_type || "Other";
+  }, []);
+
+  // Dynamic list of available sub-events for tabs
+  const availableSubEvents = useMemo(() => {
+    const baseTabs = ["ColorFun Run", "Festival", "BPC", "BCC", "Seminar", "Tenant"];
+    const dynamicExtra: string[] = [];
+    records.forEach((r) => {
+      const key = getRecordEventKey(r);
+      if (!baseTabs.includes(key) && key !== "Other" && !dynamicExtra.includes(key)) {
+        dynamicExtra.push(key);
+      }
+    });
+    return [
+      { id: "All", label: "Semua Sub-Event" },
+      ...baseTabs.map((t) => ({ id: t, label: t })),
+      ...dynamicExtra.map((t) => ({ id: t, label: t })),
+    ];
+  }, [records, getRecordEventKey]);
+
+  // Dynamic count badges for each sub-event tab matching current status filter
+  const subEventCounts = useMemo(() => {
+    const counts: Record<string, number> = { All: 0 };
+    availableSubEvents.forEach((t) => { counts[t.id] = 0; });
+
+    records.forEach((r) => {
+      if (filter === "All" || r.status === filter) {
+        counts["All"] = (counts["All"] || 0) + 1;
+        const key = getRecordEventKey(r);
+        counts[key] = (counts[key] || 0) + 1;
+      }
+    });
+    return counts;
+  }, [records, filter, availableSubEvents, getRecordEventKey]);
+
+  // Reset currentPage back to 1 whenever sub-event tab, status filter, or search query changes
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [activeSubEvent, filter, search]);
+
+  // Filtered dataset across status, sub-event tabs, and search query
   const filteredRecords = useMemo(() => {
-    if (filter === "All") return records;
-    return records.filter(r => r.status === filter);
-  }, [records, filter]);
+    return records.filter((r) => {
+      // 1. Status Filter
+      if (filter !== "All" && r.status !== filter) {
+        return false;
+      }
+
+      // 2. Sub-Event Filter
+      if (activeSubEvent !== "All") {
+        const eventKey = getRecordEventKey(r);
+        if (eventKey !== activeSubEvent) {
+          return false;
+        }
+      }
+
+      // 3. Search Query Filter
+      if (search.trim()) {
+        const q = search.trim().toLowerCase();
+        const matchName = r.participant_name?.toLowerCase().includes(q);
+        const matchRekening = r.rekening_pengirim?.toLowerCase().includes(q);
+        const matchBib = r.nomor_bib != null && String(r.nomor_bib).includes(q);
+        const matchQR = r.ticket_qr_code?.toLowerCase().includes(q);
+        const matchPhase = r.ticket_phase?.toLowerCase().includes(q);
+        const matchSub = r.sub_event_type?.toLowerCase().includes(q);
+        const matchGroup = r.group_id?.toLowerCase().includes(q);
+        const matchMembers = r.extra_members?.some(
+          (m) =>
+            m.nama_lengkap.toLowerCase().includes(q) ||
+            m.email.toLowerCase().includes(q) ||
+            m.whatsapp.toLowerCase().includes(q) ||
+            (m.nomor_bib != null && String(m.nomor_bib).includes(q))
+        );
+
+        if (
+          !matchName &&
+          !matchRekening &&
+          !matchBib &&
+          !matchQR &&
+          !matchPhase &&
+          !matchSub &&
+          !matchGroup &&
+          !matchMembers
+        ) {
+          return false;
+        }
+      }
+
+      return true;
+    });
+  }, [records, filter, activeSubEvent, search, getRecordEventKey]);
+
+  // 1. Pagination Specifications & Limits: strictly 10 participants/records per page
+  const ITEMS_PER_PAGE = 10;
+  const totalCount = filteredRecords.length;
+  const totalPages = Math.max(1, Math.ceil(totalCount / ITEMS_PER_PAGE));
+  const validCurrentPage = Math.min(Math.max(1, currentPage), totalPages);
+  const startIndex = (validCurrentPage - 1) * ITEMS_PER_PAGE;
+  const endIndex = Math.min(startIndex + ITEMS_PER_PAGE, totalCount);
+
+  const paginatedRecords = useMemo(() => {
+    return filteredRecords.slice(startIndex, startIndex + ITEMS_PER_PAGE);
+  }, [filteredRecords, startIndex]);
+
+  // Page numbers generator for pills with ellipsis (...) if total pages > 5
+  const getPaginationPages = (current: number, total: number): (number | string)[] => {
+    if (total <= 5) {
+      return Array.from({ length: total }, (_, i) => i + 1);
+    }
+    if (current <= 3) {
+      return [1, 2, 3, 4, "...", total];
+    }
+    if (current >= total - 2) {
+      return [1, "...", total - 3, total - 2, total - 1, total];
+    }
+    return [1, "...", current - 1, current, current + 1, "...", total];
+  };
 
   return (
     <section className="bg-surface/50 backdrop-blur-xl border border-white/20 rounded-2xl flex flex-col overflow-hidden relative shadow-2xl">
       {/* Header bar */}
-      <div className="p-6 border-b border-white/10 flex flex-col sm:flex-row justify-between sm:items-center gap-4 bg-surface/60">
+      <div className="p-6 border-b border-white/10 flex flex-col xl:flex-row justify-between xl:items-center gap-4 bg-surface/60">
         <div>
           <h2 className="text-xl font-bold text-on-surface flex items-center gap-2.5">
             Payment Verification Center
@@ -769,11 +910,33 @@ export default function PaymentVerification({ onTransactionUpdated }: PaymentVer
             </span>
           </h2>
           <p className="text-xs text-on-surface-variant mt-1">
-            Sinkronisasi data langsung dari <code className="font-mono text-secondary">colorfun_registrations</code> &amp; <code className="font-mono text-secondary">festival_registrations</code>
+            Sinkronisasi data langsung dari <code className="font-mono text-secondary">colorfun_registrations</code>, <code className="font-mono text-secondary">festival_registrations</code> &amp; transaksi sub-event
           </p>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
+          {/* Realtime Search Bar */}
+          <div className="relative flex-1 sm:w-64 min-w-[200px]">
+            <Search className="w-3.5 h-3.5 text-on-surface-variant absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+            <input
+              type="text"
+              placeholder="Cari nama, rekening, BIB..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="w-full pl-8 pr-7 py-1.5 bg-surface border border-white/15 rounded-xl text-xs text-on-surface placeholder:text-on-surface-variant/50 focus:border-secondary focus:outline-none transition-all font-poppins"
+            />
+            {search && (
+              <button
+                type="button"
+                onClick={() => setSearch("")}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-on-surface-variant hover:text-white cursor-pointer"
+                title="Hapus pencarian"
+              >
+                <X className="w-3 h-3" />
+              </button>
+            )}
+          </div>
+
           {/* Manual Refresh Data Button */}
           <button
             type="button"
@@ -783,7 +946,7 @@ export default function PaymentVerification({ onTransactionUpdated }: PaymentVer
             title="Muat Ulang Data (Live Fetch)"
           >
             <RotateCw className={`w-3.5 h-3.5 text-secondary ${loading ? "animate-spin" : ""}`} />
-            <span>Refresh Data</span>
+            <span className="hidden sm:inline">Refresh Data</span>
           </button>
 
           {/* Export CSV / Excel Button */}
@@ -815,6 +978,39 @@ export default function PaymentVerification({ onTransactionUpdated }: PaymentVer
         </div>
       </div>
 
+      {/* Sub-Event Navigation Tabs */}
+      <div className="flex-shrink-0 px-6 py-2.5 border-b border-white/10 bg-surface/40 flex items-center justify-between overflow-x-auto gap-3 scrollbar-thin">
+        <div className="flex items-center gap-2 min-w-max">
+          {availableSubEvents.map((tab) => {
+            const isActive = activeSubEvent === tab.id;
+            const count = subEventCounts[tab.id] || 0;
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => setActiveSubEvent(tab.id)}
+                className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-all flex items-center gap-2 cursor-pointer ${
+                  isActive
+                    ? "bg-secondary text-slate-950 font-bold shadow-[0_0_15px_rgba(240,192,77,0.3)]"
+                    : "bg-surface-container/50 text-on-surface-variant hover:text-white hover:bg-surface-container border border-white/5"
+                }`}
+              >
+                <span>{tab.label}</span>
+                <span
+                  className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono ${
+                    isActive
+                      ? "bg-slate-950/25 text-slate-950 font-bold"
+                      : "bg-white/10 text-slate-300"
+                  }`}
+                >
+                  {count}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
       {/* Error message alert */}
       {errorMessage && (
         <div className="p-4 bg-error/10 border-b border-error/20 text-error text-xs flex items-center gap-2">
@@ -824,7 +1020,7 @@ export default function PaymentVerification({ onTransactionUpdated }: PaymentVer
       )}
 
       {/* Table Content */}
-      <div className="overflow-x-auto bg-surface/80">
+      <div className="overflow-x-auto bg-surface/80 min-h-[460px]">
         <table className="w-full text-left border-collapse">
           <thead>
             <tr className="border-b border-white/10 bg-surface-container-low/60 text-on-surface-variant text-[11px] uppercase tracking-wider">
@@ -852,23 +1048,27 @@ export default function PaymentVerification({ onTransactionUpdated }: PaymentVer
                 <td colSpan={7} className="p-12 text-center text-on-surface-variant">
                   <p className="text-sm font-medium">Tidak ada transaksi ditemukan.</p>
                   <p className="text-xs text-on-surface-variant/70 mt-1">
-                    {filter !== "All"
+                    {search.trim()
+                      ? `Tidak ada transaksi yang cocok dengan pencarian "${search}".`
+                      : activeSubEvent !== "All"
+                      ? `Belum ada data untuk sub-event "${activeSubEvent}" dengan status "${filter}".`
+                      : filter !== "All"
                       ? `Belum ada transaksi dengan status "${filter}".`
                       : "Tabel transaksi di Supabase saat ini kosong."}
                   </p>
                 </td>
               </tr>
             ) : (
-              filteredRecords.map((item) => (
-                <tr key={item.id} className="hover:bg-surface-variant/30 transition-colors">
-                  <td className="p-4 py-3 text-white font-medium">
-                    <span className="block">{item.sub_event_type}</span>
+              paginatedRecords.map((item) => (
+                <tr key={item.id} className="hover:bg-surface-variant/30 transition-colors h-[72px]">
+                  <td className="p-4 py-3.5 text-white font-medium align-middle">
+                    <span className="block leading-snug">{item.sub_event_type}</span>
                     <span className="text-[10px] font-mono text-secondary uppercase font-bold tracking-wider">
                       {item.origin_table === "colorfun_registrations" ? "ColorFun Run" : item.origin_table === "festival_registrations" ? "Festival" : item.source_type}
                     </span>
                   </td>
-                  <td className="p-4 py-3 text-white font-medium">
-                    <span className="block">{item.participant_name}</span>
+                  <td className="p-4 py-3.5 text-white font-medium align-middle">
+                    <span className="block leading-snug">{item.participant_name}</span>
                     <div className="flex flex-wrap items-center gap-1.5 mt-1">
                       {item.nomor_bib != null ? (
                         <span className="font-mono text-xs font-bold text-secondary bg-secondary/10 border border-secondary/25 px-1.5 py-0.2 rounded w-fit">
@@ -901,7 +1101,7 @@ export default function PaymentVerification({ onTransactionUpdated }: PaymentVer
                       </span>
                     )}
                   </td>
-                  <td className="p-4 py-3">
+                  <td className="p-4 py-3.5 align-middle">
                     <div className="flex flex-col gap-1">
                       <span className="text-[#ffd700] font-mono font-semibold text-sm">
                         {new Intl.NumberFormat("id-ID", {
@@ -917,7 +1117,7 @@ export default function PaymentVerification({ onTransactionUpdated }: PaymentVer
                       )}
                     </div>
                   </td>
-                  <td className="p-4 py-3">
+                  <td className="p-4 py-3.5 align-middle">
                     <span
                       className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold uppercase border ${
                         item.status === "Pending"
@@ -939,24 +1139,29 @@ export default function PaymentVerification({ onTransactionUpdated }: PaymentVer
                       {item.status}
                     </span>
                   </td>
-                  <td className="p-4 py-3">
+                  <td className="p-4 py-3.5 align-middle">
                     {item.payment_proof_url ? (
-                      <a
-                        href={item.payment_proof_url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-white/5 border border-white/10 hover:bg-white/10 hover:border-secondary/50 transition-all text-xs font-medium text-on-surface-variant hover:text-secondary"
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setImagePreview({
+                            url: item.payment_proof_url,
+                            title: `Bukti Transfer - ${item.participant_name} (${item.sub_event_type})`,
+                          })
+                        }
+                        className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-white/5 border border-white/10 hover:bg-white/10 hover:border-secondary/50 transition-all text-xs font-medium text-on-surface-variant hover:text-secondary cursor-pointer"
+                        title="Lihat Bukti Pembayaran"
                       >
                         <Eye className="w-3.5 h-3.5" /> Lihat Bukti
-                      </a>
+                      </button>
                     ) : (
                       <span className="text-xs text-on-surface-variant/50 italic">Tidak ada</span>
                     )}
                   </td>
-                  <td className="p-4 py-3 text-xs text-on-surface-variant font-mono">
+                  <td className="p-4 py-3.5 text-xs text-on-surface-variant font-mono align-middle">
                     {formatDisplayWIB(item.created_at)}
                   </td>
-                  <td className="p-4 py-3 text-right">
+                  <td className="p-4 py-3.5 text-right align-middle">
                     <div className="flex justify-end gap-2">
                       {item.status === "Pending" ? (
                         <>
@@ -989,6 +1194,88 @@ export default function PaymentVerification({ onTransactionUpdated }: PaymentVer
             )}
           </tbody>
         </table>
+      </div>
+
+      {/* 2. Pagination Navigation Bar (Bottom Footer - Pinned/Sticky directly below table) */}
+      <div className="sticky bottom-0 z-10 p-4 bg-surface/95 backdrop-blur-md border-t border-white/10 flex flex-col sm:flex-row items-center justify-between gap-4 select-none shadow-lg">
+        {/* Left Section (Data Counter) */}
+        <div className="text-xs text-on-surface-variant font-poppins">
+          {totalCount === 0 ? (
+            <span>Menampilkan 0 peserta</span>
+          ) : (
+            <span>
+              Menampilkan{" "}
+              <strong className="text-white font-mono">{startIndex + 1}</strong>
+              {" - "}
+              <strong className="text-white font-mono">{Math.min(endIndex, totalCount)}</strong>
+              {" dari "}
+              <strong className="text-white font-mono">
+                {new Intl.NumberFormat("id-ID").format(totalCount)}
+              </strong>{" "}
+              peserta
+            </span>
+          )}
+        </div>
+
+        {/* Right Section (Page Navigation Controls) */}
+        <div className="flex items-center gap-1.5">
+          {/* Previous Button (<): Disabled on page 1 (opacity-40 cursor-not-allowed) */}
+          <button
+            type="button"
+            onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
+            disabled={validCurrentPage <= 1 || totalCount === 0}
+            className="p-1.5 sm:px-2.5 sm:py-1.5 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed transition-all cursor-pointer flex items-center justify-center"
+            title="Halaman Sebelumnya"
+            aria-label="Previous page"
+          >
+            <ChevronLeft className="w-4 h-4" />
+          </button>
+
+          {/* Page Number Pills: Numbered buttons showing active page highlighted with ellipsis (...) if total pages > 5 */}
+          <div className="flex items-center gap-1">
+            {getPaginationPages(validCurrentPage, totalPages).map((page, idx) => {
+              if (typeof page === "string") {
+                return (
+                  <span
+                    key={`ellipsis-${idx}`}
+                    className="w-7 h-7 sm:w-8 sm:h-8 flex items-center justify-center text-xs text-on-surface-variant select-none"
+                  >
+                    ...
+                  </span>
+                );
+              }
+
+              const isActive = page === validCurrentPage;
+              return (
+                <button
+                  key={`page-${page}`}
+                  type="button"
+                  onClick={() => setCurrentPage(page)}
+                  className={`w-7 h-7 sm:w-8 sm:h-8 rounded-xl text-xs font-semibold transition-all flex items-center justify-center cursor-pointer ${
+                    isActive
+                      ? "bg-secondary text-slate-950 font-bold border border-secondary shadow-[0_0_12px_rgba(240,192,77,0.35)]"
+                      : "border border-white/10 bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white"
+                  }`}
+                  aria-current={isActive ? "page" : undefined}
+                >
+                  {page}
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Next Button (>): Disabled on the last page */}
+          <button
+            type="button"
+            onClick={() => setCurrentPage((prev) => Math.min(totalPages, prev + 1))}
+            disabled={validCurrentPage >= totalPages || totalCount === 0}
+            className="p-1.5 sm:px-2.5 sm:py-1.5 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed transition-all cursor-pointer flex items-center justify-center"
+            title="Halaman Berikutnya"
+            aria-label="Next page"
+          >
+            <ChevronRight className="w-4 h-4" />
+          </button>
+        </div>
       </div>
 
       {/* Extra Members View Modal */}
@@ -1085,6 +1372,53 @@ export default function PaymentVerification({ onTransactionUpdated }: PaymentVer
                   </div>
                 </div>
               ))}
+            </div>
+          </div>
+        </div>
+      )}
+      {/* Receipt Preview Modal */}
+      {imagePreview && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md animate-in fade-in duration-200"
+          onClick={() => setImagePreview(null)}
+        >
+          <div
+            className="bg-[#0b1026]/95 border border-white/20 rounded-2xl p-5 max-w-2xl w-full shadow-[0_0_60px_rgba(0,0,0,0.9)] relative flex flex-col gap-4 animate-in zoom-in-95 duration-200"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-white/10 pb-3">
+              <h3 className="text-base font-bold text-white flex items-center gap-2 truncate pr-2">
+                <Eye className="w-4 h-4 text-secondary" />
+                <span className="truncate">{imagePreview.title}</span>
+              </h3>
+              <div className="flex items-center gap-2 flex-shrink-0">
+                <a
+                  href={imagePreview.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-xs font-medium text-white transition-all"
+                  title="Buka Gambar Asli di Tab Baru"
+                >
+                  <ExternalLink className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">Tab Baru</span>
+                </a>
+                <button
+                  type="button"
+                  onClick={() => setImagePreview(null)}
+                  className="p-1.5 rounded-full text-on-surface-variant hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
+                  title="Tutup Modal"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+
+            <div className="max-h-[70vh] overflow-auto rounded-xl border border-white/10 bg-black/50 p-2 flex items-center justify-center">
+              <img
+                src={imagePreview.url}
+                alt={imagePreview.title}
+                className="max-h-[65vh] max-w-full object-contain rounded-lg shadow-lg"
+              />
             </div>
           </div>
         </div>
