@@ -29,6 +29,45 @@ interface OrderHistoryTableProps {
   tickets: Ticket[];
 }
 
+/**
+ * Formats Supabase UTC created_at timestamp into local WIB (Asia/Jakarta / UTC+7).
+ * Converts UTC instant (e.g. 11:07Z) correctly to 18:07 WIB without negative offset lag.
+ */
+function formatRegistrationDateWIB(dateValue: string | Date | null | undefined): string {
+  if (!dateValue) return "-";
+  try {
+    const raw = String(dateValue).trim();
+    if (!raw) return "-";
+
+    const isExplicitUtc = raw.endsWith("Z") || /[+-]\d{2}(?::?\d{2})?$/.test(raw);
+    const dateObj = dateValue instanceof Date 
+      ? dateValue 
+      : new Date(isExplicitUtc ? raw : raw.replace(" ", "T") + "Z");
+
+    if (isNaN(dateObj.getTime())) return "-";
+
+    const parts = new Intl.DateTimeFormat("id-ID", {
+      timeZone: "Asia/Jakarta",
+      day: "numeric",
+      month: "short",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    }).formatToParts(dateObj);
+
+    const day = parts.find((p) => p.type === "day")?.value;
+    const month = parts.find((p) => p.type === "month")?.value;
+    const year = parts.find((p) => p.type === "year")?.value;
+    const hour = parts.find((p) => p.type === "hour")?.value;
+    const minute = parts.find((p) => p.type === "minute")?.value;
+
+    return `${day} ${month} ${year}, ${hour}:${minute} WIB`;
+  } catch {
+    return "-";
+  }
+}
+
 export default function OrderHistoryTable({ tickets }: OrderHistoryTableProps) {
   const [filter, setFilter] = useState<"all" | "verified" | "pending" | "rejected">("all");
   const [search, setSearch] = useState("");
@@ -299,7 +338,7 @@ export default function OrderHistoryTable({ tickets }: OrderHistoryTableProps) {
                     {/* 5. Waktu Pendaftaran (WIB) */}
                     <td className="p-4 py-3">
                       <span className="text-xs text-slate-300 font-mono">
-                        {formatDisplayWIB(ticket.created_at)}
+                        {formatRegistrationDateWIB(ticket.created_at)}
                       </span>
                     </td>
 

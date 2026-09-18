@@ -26,6 +26,7 @@ import { checkQuotaAvailability, dispatchQuotaRefresh } from "@/lib/quota";
 import { useLivePricingAndQuota } from "@/hooks/useLivePricingAndQuota";
 import SubEventQuotaBadge from "@/components/registration/SubEventQuotaBadge";
 import PromoVoucherInput from "@/components/registration/PromoVoucherInput";
+import WhatsAppChannelSection from "@/components/registration/WhatsAppChannelSection";
 import { incrementPromoQuota } from "@/lib/promo";
 import { Promo } from "@/types/database";
 import { validatePreCheckoutGuard } from "@/app/actions/checkout";
@@ -331,15 +332,21 @@ export default function BpcRegisterPage() {
       <div className="text-on-background font-poppins overflow-x-hidden relative min-h-screen flex flex-col">
         <Navbar />
         <main className="flex-grow flex items-center justify-center pt-24 pb-12 px-4 relative z-10">
-          <div className="bg-slate-950/60 backdrop-blur-xl border border-white/10 border-t-4 border-t-secondary-fixed shadow-[0_4px_25px_rgba(0,0,0,0.5)] rounded-2xl max-w-md w-full p-8 text-center animate-in fade-in duration-300">
+          <div className="bg-slate-950/60 backdrop-blur-xl border border-white/10 border-t-4 border-t-secondary-fixed shadow-[0_4px_25px_rgba(0,0,0,0.5)] rounded-2xl max-w-xl md:max-w-2xl w-full p-6 md:p-8 text-center animate-in fade-in duration-300">
             <CheckCircle className="w-20 h-20 text-secondary-fixed mx-auto mb-6 drop-shadow-[0_0_15px_rgba(176,198,255,0.5)]" />
             <CustomHeading as="h1" text="Registration Successful" className="text-3xl text-white mb-4" />
-            <p className="text-slate-300 font-poppins mb-8 leading-relaxed">
+            <p className="text-slate-300 font-poppins mb-6 leading-relaxed">
               Your response has been recorded. Our team will verify your registration and payment shortly.
             </p>
-            <Link href="/" className="inline-block bg-primary-container text-primary hover:bg-primary-container/80 px-6 py-3 rounded-full font-medium tracking-wider uppercase transition-colors font-poppins">
-              Return to Home
-            </Link>
+
+            {/* Official WhatsApp Channel Invitation */}
+            <WhatsAppChannelSection />
+
+            <div className="mt-8 pt-6 border-t border-white/10 flex justify-center">
+              <Link href="/" className="inline-flex items-center justify-center bg-amber-400 hover:bg-amber-300 text-slate-950 font-bold px-8 py-3.5 rounded-full tracking-wider uppercase transition-all duration-200 shadow-lg hover:shadow-amber-400/25 hover:scale-[1.02] active:scale-95 font-poppins text-xs md:text-sm cursor-pointer">
+                Return to Home
+              </Link>
+            </div>
           </div>
         </main>
         <Footer />

@@ -25,6 +25,7 @@ import { checkQuotaAvailability, dispatchQuotaRefresh } from "@/lib/quota";
 import { useLivePricingAndQuota } from "@/hooks/useLivePricingAndQuota";
 import SubEventQuotaBadge from "@/components/registration/SubEventQuotaBadge";
 import PromoVoucherInput from "@/components/registration/PromoVoucherInput";
+import WhatsAppChannelSection from "@/components/registration/WhatsAppChannelSection";
 import { incrementPromoQuota } from "@/lib/promo";
 import { Promo } from "@/types/database";
 import { validatePreCheckoutGuard } from "@/app/actions/checkout";
@@ -258,15 +259,21 @@ export default function SeminarRegisterPage() {
       <div className="text-on-background font-body-md overflow-x-hidden relative min-h-screen flex flex-col">
         <Navbar />
         <main className="flex-grow flex items-center justify-center pt-24 pb-12 px-4 relative z-10">
-          <div className="bg-slate-950/60 backdrop-blur-xl border border-white/10 border-t-4 border-t-secondary-fixed shadow-[0_4px_25px_rgba(0,0,0,0.5)] max-w-md w-full p-8 rounded-2xl text-center">
+          <div className="bg-slate-950/60 backdrop-blur-xl border border-white/10 border-t-4 border-t-secondary-fixed shadow-[0_4px_25px_rgba(0,0,0,0.5)] max-w-xl md:max-w-2xl w-full p-6 md:p-8 rounded-2xl text-center animate-in fade-in duration-300">
             <CheckCircle className="w-20 h-20 text-secondary-fixed mx-auto mb-6" />
             <h1 className="font-display-lg-mobile text-3xl text-white mb-4">Pendaftaran Berhasil</h1>
-            <p className="text-on-surface-variant mb-8">
+            <p className="text-on-surface-variant mb-6">
               Your response has been recorded.
             </p>
-            <Link href="/" className="inline-block bg-primary-container text-primary hover:bg-primary-container/80 px-6 py-3 rounded-full font-medium tracking-wider uppercase transition-colors">
-              Kembali ke Beranda
-            </Link>
+
+            {/* Official WhatsApp Channel Invitation */}
+            <WhatsAppChannelSection />
+
+            <div className="mt-8 pt-6 border-t border-white/10 flex justify-center">
+              <Link href="/" className="inline-flex items-center justify-center bg-amber-400 hover:bg-amber-300 text-slate-950 font-bold px-8 py-3.5 rounded-full tracking-wider uppercase transition-all duration-200 shadow-lg hover:shadow-amber-400/25 hover:scale-[1.02] active:scale-95 font-poppins text-xs md:text-sm cursor-pointer">
+                Kembali ke Beranda
+              </Link>
+            </div>
           </div>
         </main>
         <Footer />

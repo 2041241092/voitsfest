@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import GatewayGuard from "@/components/gateway/GatewayGuard";
+import WhatsAppChannelSection from "@/components/registration/WhatsAppChannelSection";
 import { fetchPricingTiers, EventPricing, DEFAULT_PRICING_TIERS } from "@/lib/pricing";
 
 export default function TenantPaymentPage() {
@@ -202,21 +203,27 @@ export default function TenantPaymentPage() {
       <div className="text-on-background font-poppins overflow-x-hidden relative min-h-screen flex flex-col">
         <Navbar />
         <main className="flex-grow flex items-center justify-center pt-28 pb-16 px-4 relative z-10">
-          <div className="bg-slate-950/60 backdrop-blur-xl border border-white/10 border-t-4 border-t-secondary-fixed shadow-[0_4px_25px_rgba(0,0,0,0.5)] max-w-lg w-full p-8 md:p-10 rounded-2xl text-center animate-in fade-in zoom-in-95 duration-500">
+          <div className="bg-slate-950/60 backdrop-blur-xl border border-white/10 border-t-4 border-t-secondary-fixed shadow-[0_4px_25px_rgba(0,0,0,0.5)] max-w-xl md:max-w-2xl w-full p-6 md:p-8 rounded-2xl text-center animate-in fade-in zoom-in-95 duration-500">
             <CheckCircle className="w-20 h-20 text-secondary-fixed mx-auto mb-6 drop-shadow-[0_0_15px_rgba(176,198,255,0.5)]" />
             <h1 className="text-3xl font-bold text-white mb-4 tracking-tight">Pembayaran Berhasil Dikirim</h1>
-            <p className="text-slate-300 font-poppins text-base md:text-lg mb-8 leading-relaxed">
+            <p className="text-slate-300 font-poppins text-base md:text-lg mb-6 leading-relaxed">
               Your response has been recorded.
             </p>
-            <div className="p-4 rounded-xl bg-black/30 border border-white/10 text-xs md:text-sm text-slate-300 font-poppins mb-8">
+            <div className="p-4 rounded-xl bg-black/30 border border-white/10 text-xs md:text-sm text-slate-300 font-poppins mb-6">
               Bukti pembayaran tenant Anda telah tersimpan dengan status <span className="text-secondary-fixed font-semibold">Pending</span> dan akan diverifikasi oleh tim panitia.
             </div>
-            <Link 
-              href="/" 
-              className="inline-block bg-primary-container text-primary hover:bg-primary-container/80 px-8 py-3.5 rounded-full font-semibold tracking-wider uppercase transition-all duration-300 shadow-lg hover:shadow-primary-container/20 hover:scale-105"
-            >
-              Kembali ke Beranda
-            </Link>
+
+            {/* Official WhatsApp Channel Invitation */}
+            <WhatsAppChannelSection />
+
+            <div className="mt-8 pt-6 border-t border-white/10 flex justify-center">
+              <Link 
+                href="/" 
+                className="inline-flex items-center justify-center bg-amber-400 hover:bg-amber-300 text-slate-950 font-bold px-8 py-3.5 rounded-full tracking-wider uppercase transition-all duration-200 shadow-lg hover:shadow-amber-400/25 hover:scale-[1.02] active:scale-95 font-poppins text-xs md:text-sm cursor-pointer"
+              >
+                Kembali ke Beranda
+              </Link>
+            </div>
           </div>
         </main>
         <Footer />

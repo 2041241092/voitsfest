@@ -7,6 +7,7 @@ import DashboardHeader from "./components/DashboardHeader";
 import { Ticket, Promo } from "@/types/database";
 import Link from "next/link";
 import Image from "next/image";
+import WhatsAppDashboardBanner from "@/components/dashboard/WhatsAppDashboardBanner";
 
 export default async function DashboardPage() {
   const supabase = await createClient();
@@ -271,6 +272,9 @@ export default async function DashboardPage() {
 
           </div>
         </section>
+
+        {/* 7. Official WhatsApp Channel Invitation Banner */}
+        <WhatsAppDashboardBanner />
 
       </main>
     </div>

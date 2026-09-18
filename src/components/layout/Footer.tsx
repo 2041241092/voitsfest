@@ -1,6 +1,7 @@
 import Link from "next/link";
 import Image from "next/image";
 import CustomHeading from "@/components/ui/CustomHeading";
+import { ExternalLink } from "lucide-react";
 
 export default function Footer() {
   return (
@@ -69,6 +70,17 @@ export default function Footer() {
           <CustomHeading as="h4" text="Reach Us" className="text-label-sm uppercase mb-6 tracking-widest text-on-background font-bold text-primary-fixed" />
           <ul className="space-y-4">
             <li className="font-body-md text-on-surface">voitsfest2026@gmail.com</li>
+            <li>
+              <a
+                href="https://its.id/m/CHANNELVOITSFEST2026"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="font-body-md text-on-surface hover:text-emerald-400 transition-colors inline-flex items-center gap-1.5 group"
+              >
+                <span>Join Our Channel</span>
+                <ExternalLink className="w-3.5 h-3.5 opacity-60 group-hover:opacity-100 transition-opacity" />
+              </a>
+            </li>
             <li className="font-body-md text-on-surface">
               Fakultas Vokasi,<br />
               Institut Teknologi Sepuluh Nopember
