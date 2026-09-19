@@ -18,7 +18,8 @@ import {
   CreditCard,
   Copy,
   Check,
-  AlertCircle
+  AlertCircle,
+  Loader2
 } from "lucide-react";
 import Link from "next/link";
 import GatewayGuard from "@/components/gateway/GatewayGuard";
@@ -179,7 +180,11 @@ export default function BpcRegisterPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!isFormValid || isSubmitting || !isAvailable) {
+    if (isSubmitting) return;
+    setIsSubmitting(true);
+    setError(null);
+
+    if (!isFormValid || !isAvailable) {
       if (!isAvailable) {
         setError(
           isEventFull
@@ -191,6 +196,7 @@ export default function BpcRegisterPage() {
             : "Periode Berakhir. Periode pendaftaran telah berakhir."
         );
       }
+      setIsSubmitting(false);
       return;
     }
 
@@ -198,6 +204,7 @@ export default function BpcRegisterPage() {
     const serverGuard = await validatePreCheckoutGuard("bpc", 1, appliedPromo?.id);
     if (!serverGuard.valid) {
       setError(serverGuard.error || "Pendaftaran tidak dapat diproses karena batas kuota atau periode aktif.");
+      setIsSubmitting(false);
       return;
     }
 
@@ -205,11 +212,9 @@ export default function BpcRegisterPage() {
     const quotaCheck = await checkQuotaAvailability("bpc", 1, appliedPromo?.id);
     if (!quotaCheck.available) {
       setError(quotaCheck.error || "Maaf, kuota pendaftaran Business Plan Competition (BPC) sudah penuh.");
+      setIsSubmitting(false);
       return;
     }
-
-    setIsSubmitting(true);
-    setError(null);
 
     try {
       // Validation
@@ -322,7 +327,6 @@ export default function BpcRegisterPage() {
       setIsSuccess(true);
     } catch (err: any) {
       setError(err.message || "An unexpected error occurred.");
-    } finally {
       setIsSubmitting(false);
     }
   };
@@ -747,21 +751,30 @@ export default function BpcRegisterPage() {
               disabled={!isFormValid || isSubmitting || !isAvailable} 
               type="submit" 
               className={`px-8 py-4 rounded-full font-medium tracking-wider uppercase flex items-center gap-3 transition-all font-poppins ${
-                !isFormValid || isSubmitting || !isAvailable
+                isSubmitting
+                  ? "bg-primary-container text-primary opacity-60 cursor-not-allowed pointer-events-none"
+                  : !isFormValid || !isAvailable
                   ? "bg-primary-container text-primary opacity-50 cursor-not-allowed" 
                   : "bg-primary-container text-primary hover:bg-primary-container/80 shadow-[0_0_20px_rgba(176,198,255,0.2)] cursor-pointer"
               }`}
             >
-              {isSubmitting
-                ? "Submitting..."
-                : isEventFull
-                ? "Sold Out / Kapasitas Penuh"
-                : isPhaseFull
-                ? "Kuota Fase Penuh"
-                : !isAvailable
-                ? availabilityReason === "phase_date_not_started" ? "Periode Belum Dimulai" : "Periode Berakhir"
-                : "Submit Registration"}
-              {!isSubmitting && isAvailable && <ArrowRight className="w-5 h-5" />}
+              {isSubmitting ? (
+                <>
+                  <Loader2 className="w-5 h-5 animate-spin" />
+                  <span>Memproses Pendaftaran...</span>
+                </>
+              ) : isEventFull ? (
+                <span>Sold Out / Kapasitas Penuh</span>
+              ) : isPhaseFull ? (
+                <span>Kuota Fase Penuh</span>
+              ) : !isAvailable ? (
+                <span>{availabilityReason === "phase_date_not_started" ? "Periode Belum Dimulai" : "Periode Berakhir"}</span>
+              ) : (
+                <>
+                  <span>Submit Registration</span>
+                  <ArrowRight className="w-5 h-5" />
+                </>
+              )}
             </button>
             {isEventFull ? (
               <p className="text-xs text-error font-medium">

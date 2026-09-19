@@ -19,7 +19,8 @@ import {
   Info, 
   X,
   FileText,
-  AlertCircle
+  AlertCircle,
+  Loader2
 } from "lucide-react";
 import Link from "next/link";
 import GatewayGuard from "@/components/gateway/GatewayGuard";
@@ -123,31 +124,39 @@ export default function TenantPaymentPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!isFormValid || isSubmitting) return;
+    if (isSubmitting) return;
+    setIsSubmitting(true);
     setError(null);
+
+    if (!isFormValid) {
+      setIsSubmitting(false);
+      return;
+    }
 
     // Validation
     if (!kategoriPeserta) {
       setError("Silakan pilih kategori peserta terlebih dahulu.");
+      setIsSubmitting(false);
       return;
     }
 
     if (kategoriPeserta === "vokasi" && !ktmFile) {
       setError("File Foto/Scan KTM wajib diunggah untuk kategori Mahasiswa Fakultas Vokasi ITS.");
+      setIsSubmitting(false);
       return;
     }
 
     if (metodeBayar !== "bni") {
       setError("Untuk Saat Ini Layanan QRIS Belum Tersedia. Silakan gunakan transfer Bank BNI.");
+      setIsSubmitting(false);
       return;
     }
 
     if (!buktiBayar) {
       setError("Bukti transfer pembayaran wajib diunggah.");
+      setIsSubmitting(false);
       return;
     }
-
-    setIsSubmitting(true);
 
     try {
       // 1. Upload files
@@ -193,7 +202,6 @@ export default function TenantPaymentPage() {
       setIsSuccess(true);
     } catch (err: any) {
       setError(err.message || "Terjadi kesalahan saat memproses pembayaran. Silakan coba lagi.");
-    } finally {
       setIsSubmitting(false);
     }
   };
@@ -605,13 +613,24 @@ export default function TenantPaymentPage() {
               disabled={!isFormValid || isSubmitting} 
               type="submit" 
               className={`w-full sm:w-auto px-10 py-4 rounded-full font-semibold tracking-wider uppercase flex items-center justify-center gap-3 transition-all font-poppins ${
-                !isFormValid || isSubmitting 
+                isSubmitting
+                  ? "bg-primary-container text-primary opacity-60 cursor-not-allowed pointer-events-none"
+                  : !isFormValid 
                   ? "bg-primary-container text-primary opacity-50 cursor-not-allowed" 
                   : "bg-primary-container text-primary hover:bg-primary-container/80 shadow-lg hover:shadow-primary-container/25 active:scale-95 cursor-pointer"
               }`}
             >
-              {isSubmitting ? "Mengirim Pembayaran..." : "Kirim Pendaftaran Tenant"}
-              {!isSubmitting && <ChevronRight className="w-5 h-5" />}
+              {isSubmitting ? (
+                <>
+                  <Loader2 className="w-5 h-5 animate-spin" />
+                  <span>Memproses Pendaftaran...</span>
+                </>
+              ) : (
+                <>
+                  <span>Kirim Pendaftaran Tenant</span>
+                  <ChevronRight className="w-5 h-5" />
+                </>
+              )}
             </button>
           </div>
 

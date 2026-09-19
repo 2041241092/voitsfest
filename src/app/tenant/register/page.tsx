@@ -15,7 +15,8 @@ import {
   Store,
   ChefHat,
   X,
-  FileSpreadsheet
+  FileSpreadsheet,
+  Loader2
 } from "lucide-react";
 import Link from "next/link";
 import GatewayGuard from "@/components/gateway/GatewayGuard";
@@ -93,41 +94,50 @@ export default function TenantRegistrationPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmitting) return;
+    setIsSubmitting(true);
     setError(null);
 
     // Validation
     if (!agreedRules || !agreedSelection) {
       setError("Kedua persetujuan pada bagian akhir wajib dicentang sebelum mengirimkan pendaftaran.");
+      setIsSubmitting(false);
       return;
     }
 
     if (!scanKtm) {
       setError("File Scan KTM/KTP (PDF) wajib diunggah.");
+      setIsSubmitting(false);
       return;
     }
 
     if (!kategoriUsaha) {
       setError("Kategori Usaha wajib dipilih.");
+      setIsSubmitting(false);
       return;
     }
 
     if (!metodePersiapan) {
       setError("Metode Persiapan / Pemasakan di Stand wajib dipilih.");
+      setIsSubmitting(false);
       return;
     }
 
     if (!logoUsaha) {
       setError("Logo Usaha wajib diunggah.");
+      setIsSubmitting(false);
       return;
     }
 
     if (!fotoProduk) {
       setError("Foto Produk wajib diunggah.");
+      setIsSubmitting(false);
       return;
     }
 
     if (!katalogProduk) {
       setError("Katalog Produk / Daftar Menu wajib diunggah.");
+      setIsSubmitting(false);
       return;
     }
 
@@ -141,6 +151,7 @@ export default function TenantRegistrationPage() {
           ? "Periode Belum Dimulai. Pendaftaran tenant belum dibuka."
           : "Periode Berakhir. Periode pendaftaran tenant telah berakhir."
       );
+      setIsSubmitting(false);
       return;
     }
 
@@ -148,6 +159,7 @@ export default function TenantRegistrationPage() {
     const serverGuard = await validatePreCheckoutGuard("tenant", 1);
     if (!serverGuard.valid) {
       setError(serverGuard.error || "Pendaftaran tidak dapat diproses karena batas kuota atau periode aktif.");
+      setIsSubmitting(false);
       return;
     }
 
@@ -155,10 +167,9 @@ export default function TenantRegistrationPage() {
     const quotaCheck = await checkQuotaAvailability("tenant", 1);
     if (!quotaCheck.available) {
       setError(quotaCheck.error || "Kuota pendaftaran tenant telah penuh. Silakan hubungi panitia.");
+      setIsSubmitting(false);
       return;
     }
-
-    setIsSubmitting(true);
 
     try {
       // 1. Upload files
@@ -193,7 +204,6 @@ export default function TenantRegistrationPage() {
       setIsSuccess(true);
     } catch (err: any) {
       setError(err.message || "Terjadi kesalahan saat memproses pendaftaran. Silakan coba lagi.");
-    } finally {
       setIsSubmitting(false);
     }
   };
@@ -795,23 +805,34 @@ export default function TenantRegistrationPage() {
               disabled={isSubmitting || !isFormValid || !isAvailable} 
               type="submit" 
               className={`w-full sm:w-auto px-10 py-4 rounded-full font-semibold tracking-wider uppercase flex items-center justify-center gap-3 transition-all font-poppins shadow-lg ${
-                isSubmitting || !isFormValid || !isAvailable
+                isSubmitting
+                  ? "bg-primary-container text-primary opacity-60 cursor-not-allowed pointer-events-none"
+                  : !isFormValid || !isAvailable
                   ? "bg-primary-container text-primary opacity-40 cursor-not-allowed pointer-events-none"
                   : "bg-primary-container text-primary hover:bg-primary-container/80 shadow-primary-container/25 active:scale-95 cursor-pointer"
               }`}
             >
-              {isSubmitting
-                ? "Mengirim Pendaftaran..."
-                : isEventFull
-                ? "Sold Out / Kapasitas Penuh"
-                : isPhaseFull
-                ? "Kuota Fase Penuh"
-                : !isAvailable
-                ? availabilityReason === "phase_date_not_started"
-                  ? "Periode Belum Dimulai"
-                  : "Periode Berakhir"
-                : "Kirim Pendaftaran"}
-              {!isSubmitting && isAvailable && <ArrowRight className="w-5 h-5" />}
+              {isSubmitting ? (
+                <>
+                  <Loader2 className="w-5 h-5 animate-spin" />
+                  <span>Memproses Pendaftaran...</span>
+                </>
+              ) : isEventFull ? (
+                <span>Sold Out / Kapasitas Penuh</span>
+              ) : isPhaseFull ? (
+                <span>Kuota Fase Penuh</span>
+              ) : !isAvailable ? (
+                <span>
+                  {availabilityReason === "phase_date_not_started"
+                    ? "Periode Belum Dimulai"
+                    : "Periode Berakhir"}
+                </span>
+              ) : (
+                <>
+                  <span>Kirim Pendaftaran</span>
+                  <ArrowRight className="w-5 h-5" />
+                </>
+              )}
             </button>
           </div>
 

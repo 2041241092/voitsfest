@@ -726,13 +726,20 @@ export default function FestivalCheckoutPage() {
   // Form Submission strictly into festival_registrations
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!isFormValid || isSubmitting) return;
+    if (isSubmitting) return;
+    setIsSubmitting(true);
     setError(null);
+
+    if (!isFormValid) {
+      setIsSubmitting(false);
+      return;
+    }
 
     // Retrieve authenticated user
     const { data: { user: authUser } } = await supabase.auth.getUser();
     if (!authUser) {
       setError("Sesi pengguna telah berakhir. Silakan login kembali.");
+      setIsSubmitting(false);
       router.replace("/login?redirect=/festival/checkout");
       return;
     }
@@ -740,30 +747,36 @@ export default function FestivalCheckoutPage() {
     if (kategoriPeserta === "Mahasiswa ITS") {
       if (!departemen.trim()) {
         setError("Departemen wajib dipilih untuk Mahasiswa ITS.");
+        setIsSubmitting(false);
         return;
       }
       if (!nrp.trim()) {
         setError("NRP (Nomor Pokok Mahasiswa) wajib diisi untuk Mahasiswa ITS.");
+        setIsSubmitting(false);
         return;
       }
       if (!ktmFile) {
         setError("Scan Kartu Pelajar / KTM wajib diunggah untuk Mahasiswa ITS.");
+        setIsSubmitting(false);
         return;
       }
     }
 
     if (!namaPemilikRekening.trim()) {
       setError("Nama pemilik rekening pengirim wajib diisi.");
+      setIsSubmitting(false);
       return;
     }
 
     if (!paymentProofFile) {
       setError("Silakan unggah bukti transfer pembayaran.");
+      setIsSubmitting(false);
       return;
     }
 
     if (!persetujuanAturan) {
       setError("Anda harus menyetujui tata tertib Festival VOITSFEST 2026.");
+      setIsSubmitting(false);
       return;
     }
 
@@ -773,27 +786,33 @@ export default function FestivalCheckoutPage() {
       const memberNum = i + 1;
       if (!m.nama_lengkap.trim()) {
         setError(`Nama lengkap Anggota ${memberNum} wajib diisi.`);
+        setIsSubmitting(false);
         return;
       }
       if (!m.whatsapp.trim()) {
         setError(`Nomor WhatsApp Anggota ${memberNum} wajib diisi.`);
+        setIsSubmitting(false);
         return;
       }
       if (!m.email.trim()) {
         setError(`Email Anggota ${memberNum} wajib diisi.`);
+        setIsSubmitting(false);
         return;
       }
       if (m.kategori_peserta === "Mahasiswa ITS") {
         if (!m.departemen.trim()) {
           setError(`Departemen Anggota ${memberNum} wajib dipilih.`);
+          setIsSubmitting(false);
           return;
         }
         if (!m.nrp.trim()) {
           setError(`NRP Anggota ${memberNum} wajib diisi.`);
+          setIsSubmitting(false);
           return;
         }
         if (!m.ktm_file) {
           setError(`Scan Kartu Pelajar / KTM Anggota ${memberNum} wajib diunggah.`);
+          setIsSubmitting(false);
           return;
         }
       }
@@ -809,6 +828,7 @@ export default function FestivalCheckoutPage() {
           ? "Periode Belum Dimulai. Pendaftaran belum dibuka."
           : "Periode Berakhir. Periode pendaftaran telah berakhir."
       );
+      setIsSubmitting(false);
       return;
     }
 
@@ -817,16 +837,16 @@ export default function FestivalCheckoutPage() {
     const serverGuard = await validatePreCheckoutGuard("festival", registrantCount, appliedPromo?.id);
     if (!serverGuard.valid) {
       setError(serverGuard.error || "Pendaftaran tidak dapat diproses karena batas kuota atau periode aktif.");
+      setIsSubmitting(false);
       return;
     }
 
     const quotaCheck = await checkQuotaAvailability("festival", registrantCount, appliedPromo?.id);
     if (!quotaCheck.available) {
       setError(quotaCheck.error || "Maaf, kuota tiket Festival VOITSFEST 2026 tidak mencukupi.");
+      setIsSubmitting(false);
       return;
     }
-
-    setIsSubmitting(true);
 
     try {
       // 1. Upload KTM if category is Mahasiswa ITS
@@ -1117,7 +1137,6 @@ export default function FestivalCheckoutPage() {
     } catch (err: any) {
       console.error("Submission error:", err);
       setError(err.message || "Terjadi kesalahan saat memproses pembayaran.");
-    } finally {
       setIsSubmitting(false);
     }
   };
@@ -2375,21 +2394,30 @@ export default function FestivalCheckoutPage() {
                 disabled={!isFormValid || isSubmitting || Boolean(subQuota?.isEventFull) || (selectedPricingId === "standard" && Boolean(subQuota && !subQuota.isAvailable))} 
                 type="submit" 
                 className={`bg-primary-container text-primary px-10 py-4 rounded-full font-medium tracking-wider uppercase flex items-center gap-3 transition-all ${
-                  !isFormValid || isSubmitting || subQuota?.isEventFull || (selectedPricingId === "standard" && subQuota && !subQuota.isAvailable)
+                  isSubmitting
+                    ? "opacity-60 cursor-not-allowed pointer-events-none"
+                    : !isFormValid || subQuota?.isEventFull || (selectedPricingId === "standard" && subQuota && !subQuota.isAvailable)
                     ? "opacity-50 cursor-not-allowed" 
                     : "hover:bg-primary-container/80 shadow-[0_0_20px_rgba(176,198,255,0.2)] cursor-pointer"
                 }`}
               >
-                {isSubmitting
-                  ? "Memproses Pembayaran..."
-                  : subQuota?.isEventFull
-                  ? "Sold Out / Kapasitas Penuh"
-                  : selectedPricingId === "standard" && subQuota?.isPhaseFull
-                  ? "Kuota Fase Penuh"
-                  : selectedPricingId === "standard" && subQuota && !subQuota.isPhaseDateActive
-                  ? subQuota.availabilityReason === "phase_date_not_started" ? "Periode Belum Dimulai" : "Periode Berakhir"
-                  : "Kirim Pembayaran"}
-                {!isSubmitting && !subQuota?.isEventFull && !(selectedPricingId === "standard" && subQuota && !subQuota.isAvailable) && <ArrowRight className="w-5 h-5" />}
+                {isSubmitting ? (
+                  <>
+                    <Loader2 className="w-5 h-5 animate-spin" />
+                    <span>Memproses Pendaftaran...</span>
+                  </>
+                ) : subQuota?.isEventFull ? (
+                  <span>Sold Out / Kapasitas Penuh</span>
+                ) : selectedPricingId === "standard" && subQuota?.isPhaseFull ? (
+                  <span>Kuota Fase Penuh</span>
+                ) : selectedPricingId === "standard" && subQuota && !subQuota.isPhaseDateActive ? (
+                  <span>{subQuota.availabilityReason === "phase_date_not_started" ? "Periode Belum Dimulai" : "Periode Berakhir"}</span>
+                ) : (
+                  <>
+                    <span>Kirim Pembayaran</span>
+                    <ArrowRight className="w-5 h-5" />
+                  </>
+                )}
               </button>
               {subQuota?.isEventFull ? (
                 <p className="text-xs text-error font-medium">

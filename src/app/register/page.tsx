@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import CustomHeading from "@/components/ui/CustomHeading";
 import Link from "next/link";
-import { Rocket, Eye, EyeOff } from "lucide-react";
+import { Rocket, Eye, EyeOff, Loader2 } from "lucide-react";
 import Navbar from "@/components/layout/Navbar";
 import Footer from "@/components/layout/Footer";
 
@@ -27,9 +27,10 @@ export default function RegisterPage() {
 
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmitting) return;
+    setIsSubmitting(true);
     setError(null);
     setSuccessMsg(null);
-    setIsSubmitting(true);
 
     if (formData.password !== formData.confirmPassword) {
       setError("Kata sandi tidak cocok (Passwords do not match).");
@@ -43,26 +44,30 @@ export default function RegisterPage() {
       return;
     }
 
-    const { data, error: signUpError } = await supabase.auth.signUp({
-      email: formData.email,
-      password: formData.password,
-      options: {
-        data: {
-          full_name: formData.fullName,
-          whatsapp_number: formData.whatsapp
+    try {
+      const { data, error: signUpError } = await supabase.auth.signUp({
+        email: formData.email,
+        password: formData.password,
+        options: {
+          data: {
+            full_name: formData.fullName,
+            whatsapp_number: formData.whatsapp
+          }
         }
+      });
+
+      if (signUpError) {
+        setError(signUpError.message);
+        setIsSubmitting(false);
+      } else {
+        setSuccessMsg("Pendaftaran berhasil! Silakan periksa email Anda (jika verifikasi diaktifkan) atau login.");
+        setTimeout(() => {
+          router.push("/login");
+        }, 2000);
       }
-    });
-
-    setIsSubmitting(false);
-
-    if (signUpError) {
-      setError(signUpError.message);
-    } else {
-      setSuccessMsg("Pendaftaran berhasil! Silakan periksa email Anda (jika verifikasi diaktifkan) atau login.");
-      setTimeout(() => {
-        router.push("/login");
-      }, 2000);
+    } catch (err: any) {
+      setError(err?.message || "Terjadi kesalahan saat memproses pendaftaran.");
+      setIsSubmitting(false);
     }
   };
 
@@ -172,9 +177,18 @@ export default function RegisterPage() {
               <button 
                 type="submit" 
                 disabled={isSubmitting}
-                className="w-full bg-tertiary text-primary-container font-bold px-8 py-3 rounded-full hover:shadow-[0_0_15px_rgba(230,191,160,0.5)] transition-all uppercase flex items-center justify-center gap-2 disabled:opacity-50"
+                className={`w-full bg-tertiary text-primary-container font-bold px-8 py-3 rounded-full hover:shadow-[0_0_15px_rgba(230,191,160,0.5)] transition-all uppercase flex items-center justify-center gap-2 ${
+                  isSubmitting
+                    ? "opacity-60 cursor-not-allowed pointer-events-none"
+                    : "cursor-pointer"
+                }`}
               >
-                {isSubmitting ? "Processing..." : (
+                {isSubmitting ? (
+                  <>
+                    <Loader2 className="w-5 h-5 animate-spin" />
+                    <span>Memproses Pendaftaran...</span>
+                  </>
+                ) : (
                   <>Buat Akun Cosmic <Rocket className="w-5 h-5" /></>
                 )}
               </button>
