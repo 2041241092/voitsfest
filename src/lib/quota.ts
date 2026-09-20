@@ -569,7 +569,7 @@ export async function checkQuotaAvailability(
   ) {
     return {
       available: false,
-      error: `Kapasitas Event Penuh / Sold Out. Total kuota pendaftaran untuk ${PRICING_EVENT_NAMES[event]} telah mencapai kapasitas maksimal (${effectiveEventQuota} slot).`,
+      error: "Maaf, kuota untuk kategori tiket/promo yang Anda pilih baru saja habis.",
       guardTriggered: "subevent_cap",
       remainingSubEventQuota: Math.max(0, effectiveEventQuota - eventStatus.totalEventRegistered),
       remainingPhaseQuota: eventStatus.remainingPhaseQuota,
@@ -586,7 +586,7 @@ export async function checkQuotaAvailability(
   ) {
     return {
       available: false,
-      error: `Kuota Fase Ini Habis. Kuota pendaftaran untuk fase "${eventStatus.phaseName}" (${PRICING_EVENT_NAMES[event]}) sudah habis terjual (${eventStatus.phaseQuota} slot).`,
+      error: "Maaf, kuota untuk kategori tiket/promo yang Anda pilih baru saja habis.",
       guardTriggered: "phase_quota",
       remainingSubEventQuota: effectiveEventQuota !== null ? Math.max(0, effectiveEventQuota - eventStatus.totalEventRegistered) : 999999,
       remainingPhaseQuota: Math.max(0, eventStatus.phaseQuota - eventStatus.usedInPhase),
@@ -651,7 +651,7 @@ export async function checkQuotaAvailability(
         if (targetPromo.usedQuota >= targetPromo.maxQuota) {
           return {
             available: false,
-            error: `Maaf, kuota untuk promo/bundling "${targetPromo.promo.title}" sudah habis (Sold Out).`,
+            error: "Maaf, kuota untuk kategori tiket/promo yang Anda pilih baru saja habis.",
             guardTriggered: "promo",
             remainingSubEventQuota: eventStatus.remainingQuota,
             remainingPhaseQuota: eventStatus.remainingPhaseQuota,
@@ -662,7 +662,7 @@ export async function checkQuotaAvailability(
         if ((targetPromo.remainingQuota ?? 0) < requestedQuantity) {
           return {
             available: false,
-            error: `Maaf, sisa kuota untuk promo/bundling "${targetPromo.promo.title}" tidak mencukupi (Tersisa: ${targetPromo.remainingQuota}).`,
+            error: "Maaf, kuota untuk kategori tiket/promo yang Anda pilih baru saja habis.",
             guardTriggered: "promo",
             remainingSubEventQuota: eventStatus.remainingQuota,
             remainingPhaseQuota: eventStatus.remainingPhaseQuota,

@@ -187,10 +187,8 @@ export default function BpcRegisterPage() {
     if (!isFormValid || !isAvailable) {
       if (!isAvailable) {
         setError(
-          isEventFull
-            ? "Sold Out / Kapasitas Penuh. Total kuota pendaftaran telah mencapai batas maksimal."
-            : isPhaseFull
-            ? "Kuota Fase Penuh. Kuota pendaftaran fase ini sudah habis terjual."
+          isEventFull || isPhaseFull
+            ? "Maaf, kuota untuk kategori tiket/promo yang Anda pilih baru saja habis."
             : availabilityReason === "phase_date_not_started"
             ? "Periode Belum Dimulai. Pendaftaran belum dibuka."
             : "Periode Berakhir. Periode pendaftaran telah berakhir."
@@ -203,7 +201,7 @@ export default function BpcRegisterPage() {
     // Lifecycle Rule 1: Server-Side Pre-Checkout Guard
     const serverGuard = await validatePreCheckoutGuard("bpc", 1, appliedPromo?.id);
     if (!serverGuard.valid) {
-      setError(serverGuard.error || "Pendaftaran tidak dapat diproses karena batas kuota atau periode aktif.");
+      setError(serverGuard.error || "Maaf, kuota untuk kategori tiket/promo yang Anda pilih baru saja habis.");
       setIsSubmitting(false);
       return;
     }
@@ -211,7 +209,7 @@ export default function BpcRegisterPage() {
     // Quota Availability Check with Guard 1 & Guard 2
     const quotaCheck = await checkQuotaAvailability("bpc", 1, appliedPromo?.id);
     if (!quotaCheck.available) {
-      setError(quotaCheck.error || "Maaf, kuota pendaftaran Business Plan Competition (BPC) sudah penuh.");
+      setError(quotaCheck.error || "Maaf, kuota untuk kategori tiket/promo yang Anda pilih baru saja habis.");
       setIsSubmitting(false);
       return;
     }
@@ -763,10 +761,8 @@ export default function BpcRegisterPage() {
                   <Loader2 className="w-5 h-5 animate-spin" />
                   <span>Memproses Pendaftaran...</span>
                 </>
-              ) : isEventFull ? (
-                <span>Sold Out / Kapasitas Penuh</span>
-              ) : isPhaseFull ? (
-                <span>Kuota Fase Penuh</span>
+              ) : isEventFull || isPhaseFull ? (
+                <span>Sold Out / Kuota Habis</span>
               ) : !isAvailable ? (
                 <span>{availabilityReason === "phase_date_not_started" ? "Periode Belum Dimulai" : "Periode Berakhir"}</span>
               ) : (
@@ -776,13 +772,9 @@ export default function BpcRegisterPage() {
                 </>
               )}
             </button>
-            {isEventFull ? (
+            {isEventFull || isPhaseFull ? (
               <p className="text-xs text-error font-medium">
-                Pendaftaran ditutup karena kapasitas maksimal BPC telah penuh (Sold Out / Kapasitas Penuh).
-              </p>
-            ) : isPhaseFull ? (
-              <p className="text-xs text-amber-300 font-medium">
-                Kuota pendaftaran untuk fase aktif ini sudah habis (Kuota Fase Penuh). Silakan menunggu pembukaan fase berikutnya.
+                Kuota pendaftaran BPC saat ini telah habis (Sold Out / Kuota Habis).
               </p>
             ) : !isAvailable ? (
               <p className="text-xs text-slate-300 font-medium">

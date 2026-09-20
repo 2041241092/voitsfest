@@ -44,11 +44,11 @@ export default function SubEventQuotaBadge({
           <Ban className="w-5 h-5 shrink-0 mt-0.5 text-error" />
           <div className="text-left">
             <h4 className="font-bold text-sm text-error uppercase tracking-wider">
-              Sold Out / Kapasitas Penuh
+              Sold Out / Kuota Habis
             </h4>
             <p className="text-xs text-error/90 mt-0.5 leading-relaxed">
-              Total kuota pendaftaran untuk <strong>{eventName}</strong> telah mencapai kapasitas maksimal (
-              {effectiveEventQuota} slot). Pendaftaran seluruh kategori saat ini ditutup.
+              Total kuota pendaftaran reguler untuk <strong>{eventName}</strong> telah mencapai kapasitas maksimal (
+              {effectiveEventQuota} slot). Silakan cek ketersediaan paket promo/bundling atau menunggu pengumuman berikutnya.
             </p>
           </div>
         </div>
@@ -57,11 +57,11 @@ export default function SubEventQuotaBadge({
           <Ban className="w-5 h-5 shrink-0 mt-0.5 text-amber-400" />
           <div className="text-left">
             <h4 className="font-bold text-sm text-amber-300 uppercase tracking-wider">
-              Kuota Fase Penuh
+              Sold Out / Kuota Habis
             </h4>
             <p className="text-xs text-amber-200/90 mt-0.5 leading-relaxed">
-              Kuota tiket untuk fase <strong>{pricing.phase}</strong> ({eventName}) sudah habis terjual (
-              {pricing.phase_quota} slot). Pendaftaran fase ini dikunci menunggu pembukaan fase berikutnya oleh panitia.
+              Kuota tiket reguler untuk fase <strong>{pricing.phase}</strong> ({eventName}) sudah habis terjual (
+              {pricing.phase_quota} slot). Anda masih dapat mendaftar dengan paket promo/bundling aktif jika tersedia.
             </p>
           </div>
         </div>
@@ -92,15 +92,10 @@ export default function SubEventQuotaBadge({
             </span>
 
             {/* Status Pill */}
-            {isEventFull ? (
+            {isEventFull || isPhaseFull ? (
               <span className="text-[11px] font-bold font-mono px-2.5 py-0.5 rounded-full bg-error/20 text-error border border-error/30 uppercase inline-flex items-center gap-1">
                 <Ban className="w-3 h-3" />
-                Sold Out / Kapasitas Penuh
-              </span>
-            ) : isPhaseFull ? (
-              <span className="text-[11px] font-bold font-mono px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 uppercase inline-flex items-center gap-1">
-                <Ban className="w-3 h-3" />
-                Kuota Fase Penuh
+                Sold Out / Kuota Habis
               </span>
             ) : !isDateActive ? (
               <span className="text-[11px] font-bold font-mono px-2.5 py-0.5 rounded-full bg-slate-500/20 text-slate-300 border border-slate-500/30 uppercase inline-flex items-center gap-1">

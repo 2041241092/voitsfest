@@ -1,28 +1,14 @@
 "use client";
 
 import { useEffect, useState, Suspense } from "react";
-import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { GatewayEvent, isGatewayOpen, EVENT_NAMES } from "@/lib/gateways";
-import { fetchPricingTiers, PricingEvent } from "@/lib/pricing";
-import { fetchAllSubEventQuotas } from "@/lib/quota";
-import { getEventTimeStatus } from "@/lib/timeUtils";
-import { createClient } from "@/lib/supabase/client";
 import { Loader2, ShieldAlert, ArrowLeft } from "lucide-react";
 
 interface GatewayGuardProps {
   event: GatewayEvent;
   children: React.ReactNode;
 }
-
-const GATEWAY_TO_PRICING: Record<GatewayEvent, PricingEvent> = {
-  cfr: "colorfun",
-  festival: "festival",
-  seminar: "seminar",
-  bcc: "bcc",
-  bpc: "bpc",
-  tenant: "tenant",
-};
 
 function GatewayGuardLoading({ eventName }: { eventName?: string }) {
   return (
@@ -50,148 +36,40 @@ function GatewayGuardLoading({ eventName }: { eventName?: string }) {
 function GatewayGuardContent({ event, children }: GatewayGuardProps) {
   const [checking, setChecking] = useState(true);
   const [blockedReason, setBlockedReason] = useState<string | null>(null);
-  const searchParams = useSearchParams();
 
   useEffect(() => {
     let isMounted = true;
 
-    async function verifyAll() {
+    async function verifyGateway() {
       try {
-        const pricingKey = GATEWAY_TO_PRICING[event];
-        const supabase = createClient();
-
-        // 1. Evaluate Sub-Event Gateway status (from cms_settings gateways)
+        // Centralized Gatekeeper: Form rendering access relies strictly and exclusively
+        // on the sub-event toggle status in 'Registration Status (Gateways)'
         const open = await isGatewayOpen(event);
         if (!isMounted) return;
+
         if (!open) {
           setBlockedReason("Pendaftaran untuk sub-event ini sedang ditutup oleh panitia.");
-          setChecking(false);
-          return;
+        } else {
+          setBlockedReason(null);
         }
-
-        // 2. Evaluate Sub-Event status in cms_settings.pricing_tiers (dates and quotas)
-        const [tiers, allQuotas] = await Promise.all([
-          fetchPricingTiers(),
-          fetchAllSubEventQuotas(),
-        ]);
-        if (!isMounted) return;
-
-        const tier = tiers[pricingKey];
-        if (tier) {
-          // Check validity dates in literal WIB
-          const { isStarted, isEnded } = getEventTimeStatus(tier.start_date, tier.end_date);
-          if (!isStarted) {
-            setBlockedReason("Periode pendaftaran untuk fase ini belum dibuka.");
-            setChecking(false);
-            return;
-          }
-          if (isEnded) {
-            setBlockedReason("Periode pendaftaran untuk sub-event ini telah berakhir.");
-            setChecking(false);
-            return;
-          }
-        }
-
-        // 3. Check promo_id / coupon parameter passed in the URL
-        const promoParam =
-          searchParams?.get("promoId") ||
-          searchParams?.get("promo_id") ||
-          searchParams?.get("coupon") ||
-          searchParams?.get("promo");
-
-        // Check quota availability:
-        // Bundling purchases strictly respect overall venue capacity (isEventFull).
-        // Regular registrations evaluate both isEventFull and active phase quota (isPhaseFull).
-        const quota = allQuotas[pricingKey];
-        if (quota) {
-          if (quota.isEventFull) {
-            setBlockedReason("Total kuota pendaftaran untuk sub-event ini telah mencapai kapasitas maksimal (Sold Out).");
-            setChecking(false);
-            return;
-          }
-          if (!promoParam && quota.isPhaseFull) {
-            setBlockedReason("Kuota pendaftaran untuk fase ini sudah habis terjual (Kuota Fase Penuh).");
-            setChecking(false);
-            return;
-          }
-        }
-
-        if (promoParam) {
-          // Look up promo record
-          let query = supabase.from("promos").select("*");
-          if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(promoParam)) {
-            query = query.eq("id", promoParam);
-          } else {
-            query = query.ilike("title", promoParam);
-          }
-
-          const { data: promoData, error: promoErr } = await query.maybeSingle();
-          if (!isMounted) return;
-
-          if (promoErr || !promoData || !promoData.is_active) {
-            setBlockedReason("Kupon promo atau paket bundling yang Anda pilih tidak aktif atau tidak ditemukan.");
-            setChecking(false);
-            return;
-          }
-
-          // Verify promo date window
-          const { isActive: isPromoActive } = getEventTimeStatus(promoData.start_date, promoData.end_date);
-          if (!isPromoActive) {
-            setBlockedReason("Masa berlaku kupon promo atau paket bundling ini telah berakhir.");
-            setChecking(false);
-            return;
-          }
-
-          // Verify remaining quota in public.promos
-          if (promoData.kuota_maksimal != null) {
-            const [festPromoRes, cfrPromoRes] = await Promise.all([
-              supabase
-                .from("festival_registrations")
-                .select("id, payment_status")
-                .eq("promo_id", promoData.id),
-              supabase
-                .from("colorfun_registrations")
-                .select("id, payment_status")
-                .eq("promo_id", promoData.id),
-            ]);
-
-            const festUsed = (festPromoRes.data || []).filter((r: any) => {
-              const s = (r.payment_status || "").toLowerCase();
-              return s !== "rejected" && s !== "";
-            }).length;
-            const cfrUsed = (cfrPromoRes.data || []).filter((r: any) => {
-              const s = (r.payment_status || "").toLowerCase();
-              return s !== "rejected" && s !== "";
-            }).length;
-
-            const totalUsed = Math.max(promoData.kuota_terpakai ?? 0, festUsed + cfrUsed);
-            if (totalUsed >= promoData.kuota_maksimal) {
-              setBlockedReason("Kuota untuk paket promo atau bundling ini telah habis terpakai.");
-              setChecking(false);
-              return;
-            }
-          }
-        }
-
-        // All checks passed!
-        setBlockedReason(null);
-        setChecking(false);
       } catch (err) {
         console.error("Gateway guard verification error:", err);
-        // On unexpected error, do not block
         if (isMounted) {
           setBlockedReason(null);
+        }
+      } finally {
+        if (isMounted) {
           setChecking(false);
         }
       }
     }
 
-    verifyAll();
+    verifyGateway();
 
     return () => {
       isMounted = false;
     };
-  }, [event, searchParams]);
+  }, [event]);
 
   if (checking) {
     return <GatewayGuardLoading eventName={EVENT_NAMES[event]} />;

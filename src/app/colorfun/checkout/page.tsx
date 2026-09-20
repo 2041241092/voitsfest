@@ -585,8 +585,43 @@ export default function ColorFunCheckoutPage() {
     }
   };
 
+  // 1. Regular Phase Option Availability
+  const isRegularPhaseFull = Boolean(subQuota?.isPhaseFull);
+  const isEventCapacityFull = Boolean(subQuota?.isEventFull);
+  const isRegularSoldOut = isRegularPhaseFull || isEventCapacityFull || Boolean(subQuota && !subQuota.isAvailable);
+
+  // 2. Selected Option Availability
+  const isCurrentOptionSoldOut = useMemo(() => {
+    if (selectedPricingId === "standard") {
+      return isRegularSoldOut;
+    }
+    const currentPromo = activePromos.find((p) => p.id === selectedPricingId);
+    if (!currentPromo || !currentPromo.is_active) return true;
+    const { isActive: isPromoDateActive } = getEventTimeStatus(currentPromo.start_date, currentPromo.end_date);
+    if (!isPromoDateActive) return true;
+    const isPromoUnlimited = currentPromo.kuota_maksimal == null;
+    const promoUsed = currentPromo.kuota_terpakai ?? 0;
+    return !isPromoUnlimited && currentPromo.kuota_maksimal != null && promoUsed >= currentPromo.kuota_maksimal;
+  }, [selectedPricingId, isRegularSoldOut, activePromos]);
+
+  // 3. Are all selectable options sold out?
+  const areAllOptionsSoldOut = useMemo(() => {
+    if (!isRegularSoldOut) return false;
+    if (activePromos.length === 0) return true;
+    return activePromos.every((p) => {
+      const { isActive: isPromoDateActive } = getEventTimeStatus(p.start_date, p.end_date);
+      if (!p.is_active || !isPromoDateActive) return true;
+      if (p.kuota_maksimal == null) return false;
+      return (p.kuota_terpakai ?? 0) >= p.kuota_maksimal;
+    });
+  }, [isRegularSoldOut, activePromos]);
+
   // Select Standard Base Price
   const handleSelectStandardPrice = () => {
+    if (isRegularSoldOut) {
+      setError("Maaf, kuota untuk kategori tiket/promo yang Anda pilih baru saja habis.");
+      return;
+    }
     setSelectedPricingId("standard");
     setAppliedPromo(null);
     setPromoCode("");
@@ -594,16 +629,28 @@ export default function ColorFunCheckoutPage() {
   };
 
   // Select a Promo Bundle Card
-  const handleSelectPromoOption = (promo: Promo) => {
+  const handleSelectPromoOption = useCallback((promo: Promo) => {
     if (selectedPricingId === promo.id) {
-      // Toggle off if already selected -> return to standard
-      handleSelectStandardPrice();
+      // Toggle off if already selected -> return to standard if available
+      if (!isRegularSoldOut) {
+        handleSelectStandardPrice();
+      }
+      return;
+    }
+
+    const isPromoUnlimited = promo.kuota_maksimal == null;
+    const promoUsed = promo.kuota_terpakai ?? 0;
+    const isPromoSoldOut = !isPromoUnlimited && promo.kuota_maksimal != null && promoUsed >= promo.kuota_maksimal;
+    const { isActive: isPromoDateActive } = getEventTimeStatus(promo.start_date, promo.end_date);
+
+    if (!promo.is_active || !isPromoDateActive || isPromoSoldOut) {
+      setPromoError("Maaf, kuota untuk kategori tiket/promo yang Anda pilih baru saja habis.");
       return;
     }
 
     const result = validatePromoForEvent(promo, "ColorFun Run", CFR_TICKET_PRICE);
     if (!result.valid) {
-      setPromoError(result.error || "Promo ini tidak dapat diterapkan.");
+      setPromoError(result.error || "Maaf, kuota untuk kategori tiket/promo yang Anda pilih baru saja habis.");
       return;
     }
 
@@ -611,7 +658,21 @@ export default function ColorFunCheckoutPage() {
     setAppliedPromo(result.promo || promo);
     setPromoCode(promo.title);
     setPromoError(null);
-  };
+  }, [selectedPricingId, isRegularSoldOut, CFR_TICKET_PRICE]);
+
+  // Auto-select first available promo if regular tier is exhausted
+  useEffect(() => {
+    if (selectedPricingId === "standard" && isRegularSoldOut && activePromos.length > 0) {
+      const availablePromo = activePromos.find((p) => {
+        const { isActive } = getEventTimeStatus(p.start_date, p.end_date);
+        const isSoldOut = p.kuota_maksimal != null && (p.kuota_terpakai ?? 0) >= p.kuota_maksimal;
+        return p.is_active && isActive && !isSoldOut;
+      });
+      if (availablePromo) {
+        handleSelectPromoOption(availablePromo);
+      }
+    }
+  }, [selectedPricingId, isRegularSoldOut, activePromos, handleSelectPromoOption]);
 
   // Apply Promo Handler (manual code input)
   const handleApplyPromo = async () => {
@@ -861,16 +922,8 @@ export default function ColorFunCheckoutPage() {
       }
     }
 
-    if (subQuota?.isEventFull || (selectedPricingId === "standard" && subQuota && !subQuota.isAvailable)) {
-      setError(
-        subQuota?.isEventFull
-          ? "Sold Out / Kapasitas Penuh. Total kuota pendaftaran untuk event ini telah mencapai kapasitas maksimal."
-          : subQuota?.isPhaseFull
-          ? "Kuota Fase Penuh. Kuota tiket fase ini sudah habis terjual."
-          : subQuota?.availabilityReason === "phase_date_not_started"
-          ? "Periode Belum Dimulai. Pendaftaran belum dibuka."
-          : "Periode Berakhir. Periode pendaftaran telah berakhir."
-      );
+    if (isCurrentOptionSoldOut || areAllOptionsSoldOut) {
+      setError("Maaf, kuota untuk kategori tiket/promo yang Anda pilih baru saja habis.");
       setIsSubmitting(false);
       return;
     }
@@ -879,14 +932,14 @@ export default function ColorFunCheckoutPage() {
     const registrantCount = Math.max(appliedPromo?.kapasitas || 1, 1 + extraMembers.length);
     const serverGuard = await validatePreCheckoutGuard("colorfun", registrantCount, appliedPromo?.id);
     if (!serverGuard.valid) {
-      setError(serverGuard.error || "Pendaftaran tidak dapat diproses karena batas kuota atau periode aktif.");
+      setError(serverGuard.error || "Maaf, kuota untuk kategori tiket/promo yang Anda pilih baru saja habis.");
       setIsSubmitting(false);
       return;
     }
 
     const quotaCheck = await checkQuotaAvailability("colorfun", registrantCount, appliedPromo?.id);
     if (!quotaCheck.available) {
-      setError(quotaCheck.error || "Maaf, kuota tiket ColorFun Run 5K tidak mencukupi.");
+      setError("Maaf, kuota untuk kategori tiket/promo yang Anda pilih baru saja habis.");
       setIsSubmitting(false);
       return;
     }
@@ -1802,7 +1855,7 @@ export default function ColorFunCheckoutPage() {
                 ) : activePromos.length === 0 ? (
                   /* Scenario A: No Active Promos -> Dynamic Base Price Card */
                   <div className={`p-5 md:p-6 rounded-2xl border-2 transition-all flex items-center justify-between gap-4 ${
-                    subQuota && !subQuota.isAvailable
+                    isRegularSoldOut
                       ? "bg-black/20 border-white/10 opacity-60 pointer-events-none cursor-not-allowed backdrop-blur-sm grayscale-[25%]"
                       : "bg-gradient-to-r from-secondary/15 via-slate-800/80 to-primary/15 border-secondary/50 shadow-[0_0_25px_rgba(176,198,255,0.15)]"
                   }`}>
@@ -1811,15 +1864,10 @@ export default function ColorFunCheckoutPage() {
                         <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider text-slate-300 bg-white/10 border border-white/20">
                           Fase Pendaftaran Aktif
                         </span>
-                        {subQuota?.isEventFull ? (
+                        {isRegularSoldOut ? (
                           <span className="text-[10px] font-bold font-mono px-2.5 py-0.5 rounded-full bg-error/20 text-error border border-error/40 uppercase tracking-wider flex items-center gap-1">
                             <Ban className="w-2.5 h-2.5" />
-                            Sold Out / Kapasitas Penuh
-                          </span>
-                        ) : subQuota?.isPhaseFull ? (
-                          <span className="text-[10px] font-bold font-mono px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40 uppercase tracking-wider flex items-center gap-1">
-                            <Ban className="w-2.5 h-2.5" />
-                            Kuota Fase Penuh
+                            Sold Out / Kuota Habis
                           </span>
                         ) : subQuota && !subQuota.isPhaseDateActive ? (
                           <span className="text-[10px] font-bold font-mono px-2.5 py-0.5 rounded-full bg-slate-500/20 text-slate-300 border border-slate-500/40 uppercase tracking-wider flex items-center gap-1">
@@ -1848,7 +1896,7 @@ export default function ColorFunCheckoutPage() {
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                     {/* Left Card: Dynamic Phase Name / Base Ticket */}
                     {(() => {
-                      const isBaseAvailable = !subQuota || subQuota.isAvailable;
+                      const isBaseAvailable = !isRegularSoldOut;
                       return (
                         <div
                           role="button"
@@ -1856,17 +1904,7 @@ export default function ColorFunCheckoutPage() {
                           aria-disabled={!isBaseAvailable}
                           onClick={() => {
                             if (!isBaseAvailable) {
-                              if (subQuota?.isEventFull) {
-                                setError("Maaf, Sold Out / Kapasitas Penuh.");
-                              } else if (subQuota?.isPhaseFull) {
-                                setError("Maaf, Kuota Fase Penuh.");
-                              } else if (subQuota && !subQuota.isPhaseDateActive) {
-                                setError(
-                                  subQuota.availabilityReason === "phase_date_not_started"
-                                    ? "Periode Belum Dimulai. Pendaftaran belum dibuka."
-                                    : "Periode Berakhir. Periode pendaftaran telah berakhir."
-                                );
-                              }
+                              setError("Maaf, kuota untuk kategori tiket/promo yang Anda pilih baru saja habis.");
                               return;
                             }
                             handleSelectStandardPrice();
@@ -1890,15 +1928,10 @@ export default function ColorFunCheckoutPage() {
                                 <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider text-slate-300 bg-white/10 border border-white/20">
                                   Fase Aktif
                                 </span>
-                                {subQuota?.isEventFull ? (
+                                {isRegularSoldOut ? (
                                   <span className="text-[10px] font-bold font-mono px-2.5 py-0.5 rounded-full bg-error/20 text-error border border-error/40 uppercase tracking-wider flex items-center gap-1">
                                     <Ban className="w-2.5 h-2.5" />
-                                    Sold Out / Kapasitas Penuh
-                                  </span>
-                                ) : subQuota?.isPhaseFull ? (
-                                  <span className="text-[10px] font-bold font-mono px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40 uppercase tracking-wider flex items-center gap-1">
-                                    <Ban className="w-2.5 h-2.5" />
-                                    Kuota Fase Penuh
+                                    Sold Out / Kuota Habis
                                   </span>
                                 ) : subQuota && !subQuota.isPhaseDateActive ? (
                                   <span className="text-[10px] font-bold font-mono px-2.5 py-0.5 rounded-full bg-slate-500/20 text-slate-300 border border-slate-500/40 uppercase tracking-wider flex items-center gap-1">
@@ -1915,13 +1948,7 @@ export default function ColorFunCheckoutPage() {
                               {!isBaseAvailable ? (
                                 <span className="text-[10px] font-bold font-mono px-2.5 py-1 rounded-full bg-error/20 text-error border border-error/40 uppercase tracking-wider flex items-center gap-1 shrink-0">
                                   <Ban className="w-3 h-3" />
-                                  {subQuota?.isEventFull
-                                    ? "Sold Out / Kapasitas Penuh"
-                                    : subQuota?.isPhaseFull
-                                    ? "Kuota Fase Penuh"
-                                    : subQuota?.availabilityReason === "phase_date_not_started"
-                                    ? "Periode Belum Dimulai"
-                                    : "Periode Berakhir"}
+                                  Sold Out / Kuota Habis
                                 </span>
                               ) : (
                                 <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-colors shrink-0 ${
@@ -1968,7 +1995,7 @@ export default function ColorFunCheckoutPage() {
                         ? Math.max(0, promo.kuota_maksimal - usedQuota) 
                         : null;
 
-                      const isAvailable = !isOutsideDateRange && !isSoldOut;
+                      const isAvailable = promo.is_active && !isOutsideDateRange && !isSoldOut;
 
                       return (
                         <div
@@ -1978,13 +2005,7 @@ export default function ColorFunCheckoutPage() {
                           aria-disabled={!isAvailable}
                           onClick={() => {
                             if (!isAvailable) {
-                              if (isSoldOut) {
-                                setPromoError(`Maaf, kuota paket bundling "${promo.title}" sudah habis (Sold Out).`);
-                              } else if (isDateEnded) {
-                                setPromoError(`Maaf, periode pembelian paket bundling "${promo.title}" telah berakhir.`);
-                              } else if (!isDateStarted) {
-                                setPromoError(`Maaf, periode pembelian paket bundling "${promo.title}" belum dimulai.`);
-                              }
+                              setPromoError("Maaf, kuota untuk kategori tiket/promo yang Anda pilih baru saja habis.");
                               return;
                             }
                             handleSelectPromoOption(promo);
@@ -2025,7 +2046,7 @@ export default function ColorFunCheckoutPage() {
                                 {isSoldOut ? (
                                   <span className="text-[10px] font-bold font-mono px-2.5 py-0.5 rounded-full bg-error/20 text-error border border-error/40 uppercase tracking-wider flex items-center gap-1">
                                     <Ban className="w-2.5 h-2.5" />
-                                    Kuota Habis
+                                    Promo Habis
                                   </span>
                                 ) : isDateEnded ? (
                                   /* Condition 3: Date Expired */
@@ -2054,7 +2075,7 @@ export default function ColorFunCheckoutPage() {
                               {!isAvailable ? (
                                 <span className="text-[10px] font-bold font-mono px-2 py-0.5 rounded-full bg-slate-800/80 text-slate-400 border border-slate-700 uppercase tracking-wider flex items-center gap-1 shrink-0">
                                   <Ban className="w-2.5 h-2.5" />
-                                  {isSoldOut ? "Kuota Habis" : "Promo Berakhir"}
+                                  {isSoldOut ? "Promo Habis" : "Promo Berakhir"}
                                 </span>
                               ) : (
                                 <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-colors shrink-0 ${
@@ -2489,12 +2510,12 @@ export default function ColorFunCheckoutPage() {
             {/* Submit Button */}
             <div className="flex flex-col items-end gap-2 pt-4">
               <button 
-                disabled={!isFormValid || isSubmitting || Boolean(subQuota?.isEventFull) || (selectedPricingId === "standard" && Boolean(subQuota && !subQuota.isAvailable))} 
+                disabled={!isFormValid || isSubmitting || isCurrentOptionSoldOut || areAllOptionsSoldOut} 
                 type="submit" 
                 className={`bg-primary-container text-primary px-10 py-4 rounded-full font-medium tracking-wider uppercase flex items-center gap-3 transition-all ${
                   isSubmitting
                     ? "opacity-60 cursor-not-allowed pointer-events-none"
-                    : !isFormValid || subQuota?.isEventFull || (selectedPricingId === "standard" && subQuota && !subQuota.isAvailable)
+                    : !isFormValid || isCurrentOptionSoldOut || areAllOptionsSoldOut
                     ? "opacity-50 cursor-not-allowed" 
                     : "hover:bg-primary-container/80 shadow-[0_0_20px_rgba(176,198,255,0.2)] cursor-pointer"
                 }`}
@@ -2504,12 +2525,10 @@ export default function ColorFunCheckoutPage() {
                     <Loader2 className="w-5 h-5 animate-spin" />
                     <span>Memproses Pendaftaran...</span>
                   </>
-                ) : subQuota?.isEventFull ? (
-                  <span>Sold Out / Kapasitas Penuh</span>
-                ) : selectedPricingId === "standard" && subQuota?.isPhaseFull ? (
-                  <span>Kuota Fase Penuh</span>
-                ) : selectedPricingId === "standard" && subQuota && !subQuota.isPhaseDateActive ? (
-                  <span>{subQuota.availabilityReason === "phase_date_not_started" ? "Periode Belum Dimulai" : "Periode Berakhir"}</span>
+                ) : areAllOptionsSoldOut ? (
+                  <span>Sold Out / Kuota Habis</span>
+                ) : isCurrentOptionSoldOut ? (
+                  <span>{selectedPricingId === "standard" ? "Sold Out / Kuota Habis" : "Promo Habis"}</span>
                 ) : (
                   <>
                     <span>Kirim Pembayaran</span>
@@ -2517,17 +2536,15 @@ export default function ColorFunCheckoutPage() {
                   </>
                 )}
               </button>
-              {subQuota?.isEventFull ? (
+              {areAllOptionsSoldOut ? (
                 <p className="text-xs text-error font-medium">
-                  Pendaftaran ColorFun Run saat ini ditutup karena kapasitas maksimal event telah penuh (Sold Out / Kapasitas Penuh).
+                  Seluruh tiket dan paket promo ColorFun Run saat ini telah habis terjual (Sold Out / Kuota Habis).
                 </p>
-              ) : selectedPricingId === "standard" && subQuota?.isPhaseFull ? (
+              ) : isCurrentOptionSoldOut ? (
                 <p className="text-xs text-amber-300 font-medium">
-                  Kuota tiket fase ini telah habis (Kuota Fase Penuh). Silakan pilih paket bundling atau tunggu pembukaan fase berikutnya.
-                </p>
-              ) : selectedPricingId === "standard" && subQuota && !subQuota.isPhaseDateActive ? (
-                <p className="text-xs text-slate-300 font-medium">
-                  {subQuota.availabilityReason === "phase_date_not_started" ? "Periode pendaftaran tiket belum dimulai." : "Periode pendaftaran tiket telah berakhir."}
+                  {selectedPricingId === "standard"
+                    ? "Kuota tiket reguler untuk fase ini sudah habis (Sold Out / Kuota Habis). Silakan pilih paket promo/bundling aktif di atas."
+                    : "Kuota untuk paket promo yang Anda pilih sudah habis (Promo Habis). Silakan pilih kategori tiket atau promo lainnya."}
                 </p>
               ) : !isFormValid ? (
                 <p className="text-xs text-on-surface-variant/70 font-poppins">

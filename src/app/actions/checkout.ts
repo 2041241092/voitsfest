@@ -279,7 +279,7 @@ export async function validatePreCheckoutGuard(
     if (!isEventUnlimited && eventQuota !== null && totalEventUsed + requestedQuantity > eventQuota) {
       return {
         valid: false,
-        error: `Sold Out / Kapasitas Penuh. Total kuota pendaftaran untuk ${PRICING_EVENT_NAMES[eventKey]} telah mencapai kapasitas maksimal (${eventQuota} slot).`,
+        error: "Maaf, kuota untuk kategori tiket/promo yang Anda pilih baru saja habis.",
         guardTriggered: "event_capacity_full",
         remainingEventQuota: Math.max(0, eventQuota - totalEventUsed),
       };
@@ -294,7 +294,7 @@ export async function validatePreCheckoutGuard(
     if (!promoId && !isPhaseUnlimited && phaseQuota !== null && phaseUsed + requestedQuantity > phaseQuota) {
       return {
         valid: false,
-        error: `Kuota Fase Penuh. Kuota pendaftaran untuk fase "${tierConfig.phase}" (${PRICING_EVENT_NAMES[eventKey]}) sudah habis terjual (${phaseQuota} slot).`,
+        error: "Maaf, kuota untuk kategori tiket/promo yang Anda pilih baru saja habis.",
         guardTriggered: "phase_quota_full",
         remainingPhaseQuota: Math.max(0, phaseQuota - phaseUsed),
         remainingEventQuota: eventQuota !== null ? Math.max(0, eventQuota - totalEventUsed) : null,
@@ -347,7 +347,7 @@ export async function validatePreCheckoutGuard(
         if (effectivePromoUsed + requestedQuantity > promo.kuota_maksimal) {
           return {
             valid: false,
-            error: "Kode promo sudah melewati periode aktif atau kuota telah habis",
+            error: "Maaf, kuota untuk kategori tiket/promo yang Anda pilih baru saja habis.",
             guardTriggered: "promo_quota_full",
             remainingPromoQuota: Math.max(0, promo.kuota_maksimal - effectivePromoUsed),
           };
