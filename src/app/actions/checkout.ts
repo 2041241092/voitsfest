@@ -10,7 +10,6 @@ import {
 } from "@/lib/pricing";
 import { getEventTimeStatus, parseWibDate } from "@/lib/timeUtils";
 import { Promo } from "@/types/database";
-import { isRegularRegistration } from "@/lib/quota";
 
 export interface CheckoutResult {
   success?: boolean;
@@ -43,7 +42,12 @@ function normalizeStatus(status: unknown): string {
 }
 
 /**
- * Validates whether a registration record belongs to the active phase.
+ * Validates whether a registration record belongs to the active registration phase milestone.
+ * - Resolves string mismatches on ticket_phase (stripping promo tags like [PROMO:uuid:qty]).
+ * - Uses flexible case-insensitive matching (ilike semantics).
+ * - Implements cumulative milestone aggregation up to the active milestone: preserves
+ *   registered participants up to the current milestone rather than resetting to 0
+ *   when a new phase is created.
  */
 function isRecordInPhase(
   record: { ticket_phase?: string | null; created_at?: string | null },
@@ -51,30 +55,33 @@ function isRecordInPhase(
   startDate?: string | null,
   endDate?: string | null
 ): boolean {
-  if (record.ticket_phase) {
-    const cleanRecordPhase = record.ticket_phase.replace(/\[PROMO:.*?\]/, "").trim().toLowerCase();
-    const cleanTargetPhase = phase.trim().toLowerCase();
-    if (cleanRecordPhase && (cleanRecordPhase.includes(cleanTargetPhase) || cleanTargetPhase.includes(cleanRecordPhase))) {
-      return true;
-    }
-  }
-
-  if (startDate && record.created_at) {
-    const startObj = parseWibDate(startDate);
-    const endObj = endDate ? parseWibDate(endDate) : null;
+  // 1. Boundary check: if active phase has an explicit end_date, registrations created
+  // strictly after the end_date belong to a subsequent period and are excluded.
+  if (endDate && record.created_at) {
+    const endObj = parseWibDate(endDate);
     const recObj = parseWibDate(record.created_at);
-    if (startObj && recObj) {
-      if (recObj.getTime() < startObj.getTime()) return false;
-      if (endObj && recObj.getTime() > endObj.getTime()) return false;
-      return true;
+    if (endObj && recObj && recObj.getTime() > endObj.getTime()) {
+      return false;
     }
   }
 
-  if (!startDate && (!record.ticket_phase || record.ticket_phase.trim() === "")) {
-    return true;
+  // 2. Flexible ticket_phase string matching (ilike semantics):
+  // Clean off any promo tag pattern [PROMO:uuid:qty] or [PROMO:...]
+  if (record.ticket_phase && phase) {
+    const cleanRecordPhase = record.ticket_phase.replace(/\[PROMO:.*?\]/gi, "").trim().toLowerCase();
+    const cleanTargetPhase = phase.trim().toLowerCase();
+    if (cleanRecordPhase && cleanTargetPhase) {
+      if (cleanRecordPhase.includes(cleanTargetPhase) || cleanTargetPhase.includes(cleanRecordPhase)) {
+        return true;
+      }
+    }
   }
 
-  return false;
+  // 3. Cumulative milestone aggregation:
+  // The phase quota represents cumulative progress (e.g. Pre Sale 1 + Pre Sale 2 combined).
+  // All valid registered participants created up to the active milestone are retained
+  // rather than resetting to 0 on new phase creation.
+  return true;
 }
 
 /**
@@ -167,8 +174,7 @@ export async function validatePreCheckoutGuard(
         const s = normalizeStatus(r.payment_status);
         if (s !== "rejected" && s !== "") {
           totalEventUsed++;
-          const isRegular = isRegularRegistration(r);
-          if (isRegular && isRecordInPhase(r, tierConfig.phase, tierConfig.start_date, tierConfig.end_date)) {
+          if (isRecordInPhase(r, tierConfig.phase, tierConfig.start_date, tierConfig.end_date)) {
             phaseUsed++;
           }
         }
@@ -182,8 +188,7 @@ export async function validatePreCheckoutGuard(
         const s = normalizeStatus(r.payment_status);
         if (s !== "rejected" && s !== "") {
           totalEventUsed++;
-          const isRegular = isRegularRegistration(r);
-          if (isRegular && isRecordInPhase(r, tierConfig.phase, tierConfig.start_date, tierConfig.end_date)) {
+          if (isRecordInPhase(r, tierConfig.phase, tierConfig.start_date, tierConfig.end_date)) {
             phaseUsed++;
           }
         }
@@ -217,9 +222,7 @@ export async function validatePreCheckoutGuard(
         const effectiveStatus = tx ? tx.status : normalizeStatus(r.status);
         if (effectiveStatus !== "rejected" && effectiveStatus !== "") {
           totalEventUsed++;
-          const isRegular = isRegularRegistration({ promo_id: tx?.promoId, ticket_phase: tx?.ticketPhase });
           if (
-            isRegular &&
             isRecordInPhase(
               { ticket_phase: tx?.ticketPhase, created_at: r.created_at },
               tierConfig.phase,
@@ -251,10 +254,9 @@ export async function validatePreCheckoutGuard(
       (regRes.data || []).forEach((r: any) => {
         const tx = txMap.get(r.id);
         const effectiveStatus = tx ? tx.status : "pending";
-        if (effectiveStatus !== "rejected") {
+        if (effectiveStatus !== "rejected" && effectiveStatus !== "") {
           totalEventUsed++;
-          const isRegular = isRegularRegistration({ promo_id: tx?.promoId, ticket_phase: tx?.ticketPhase });
-          if (isRegular && isRecordInPhase({ ticket_phase: tx?.ticketPhase || null, created_at: r.created_at }, tierConfig.phase, tierConfig.start_date, tierConfig.end_date)) {
+          if (isRecordInPhase({ ticket_phase: tx?.ticketPhase || null, created_at: r.created_at }, tierConfig.phase, tierConfig.start_date, tierConfig.end_date)) {
             phaseUsed++;
           }
         }

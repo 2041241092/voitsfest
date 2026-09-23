@@ -314,3 +314,41 @@ export async function rollbackPromoQuotaOnReject(
   }
 }
 
+/**
+ * Robustly extracts an array of special terms & conditions strings from a promo object.
+ * Supports string[], jsonb array, serialized JSON string, or newline-delimited text.
+ */
+export function extractSpecialTerms(promo?: Promo | null): string[] {
+  if (!promo) return [];
+  const raw: unknown = promo.special_terms ?? promo.terms_and_conditions;
+  if (!raw) return [];
+
+  if (Array.isArray(raw)) {
+    return raw
+      .map((item: any) => (typeof item === "string" ? item : item?.text || item?.value || ""))
+      .map((str: string) => String(str).trim())
+      .filter((str: string) => str.length > 0);
+  }
+
+  if (typeof raw === "string") {
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        return parsed
+          .map((item: any) => (typeof item === "string" ? item : item?.text || item?.value || ""))
+          .map((str: string) => String(str).trim())
+          .filter((str: string) => str.length > 0);
+      }
+    } catch {
+      // Fallback: split by newlines
+    }
+
+    return raw
+      .split("\n")
+      .map((s: string) => s.trim())
+      .filter((s: string) => s.length > 0);
+  }
+
+  return [];
+}
+

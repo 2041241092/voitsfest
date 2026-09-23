@@ -26,7 +26,8 @@ import {
   ChevronRight,
   ChevronsLeft,
   ChevronsRight,
-  ShieldCheck
+  ShieldCheck,
+  FileCheck
 } from "lucide-react";
 import { formatFestivalParticipant, formatFestivalParticipantCSV, downloadCSV } from "@/lib/bib";
 import { decrementPromoQuota, rollbackPromoQuotaOnReject } from "@/lib/promo";
@@ -47,6 +48,7 @@ export type FestivalRegistration = {
   ktm_url?: string | null;
   rekening_pengirim?: string | null;
   bukti_transfer_url?: string | null;
+  promo_proof_url?: string | null;
   payment_status: string;
   amount_paid?: number | null;
   ticket_phase?: string | null;
@@ -798,6 +800,17 @@ export default function FestivalDatabase() {
                         <span className="text-[11px] text-slate-400 font-mono truncate max-w-[140px]" title={row.rekening_pengirim || ""}>
                           {row.rekening_pengirim ? `a.n ${row.rekening_pengirim}` : "a.n -"}
                         </span>
+                        {row.promo_proof_url && (
+                          <button
+                            type="button"
+                            onClick={() => setImagePreview({ url: row.promo_proof_url!, title: `Bukti Promo - ${row.nama_lengkap}` })}
+                            className="inline-flex items-center gap-1 text-[11px] font-semibold text-amber-300 hover:text-amber-200 mt-0.5 cursor-pointer"
+                            title="Lihat Berkas Bukti Syarat Promo"
+                          >
+                            <FileCheck className="w-3 h-3 text-amber-400" />
+                            <span>Bukti Promo</span>
+                          </button>
+                        )}
                       </div>
                     </td>
 
@@ -1389,6 +1402,44 @@ export default function FestivalDatabase() {
                     />
                   </div>
                 )}
+
+                {/* Bukti Persyaratan Promo */}
+                {selectedDetailRecord.promo_proof_url && (
+                  <div className="mt-3 pt-3 border-t border-white/10 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-semibold text-amber-300 flex items-center gap-1.5">
+                        <FileCheck className="w-3.5 h-3.5 text-amber-400" />
+                        Bukti Persyaratan Promo
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setImagePreview({ url: selectedDetailRecord.promo_proof_url!, title: `Bukti Promo - ${selectedDetailRecord.nama_lengkap}` })}
+                        className="text-[11px] text-amber-400 hover:underline flex items-center gap-1 cursor-pointer"
+                      >
+                        <Maximize2 className="w-3 h-3" />
+                        <span>Perbesar</span>
+                      </button>
+                    </div>
+                    <div 
+                      onClick={() => setImagePreview({ url: selectedDetailRecord.promo_proof_url!, title: `Bukti Promo - ${selectedDetailRecord.nama_lengkap}` })}
+                      className="rounded-xl overflow-hidden border border-amber-500/20 bg-black/40 max-h-48 flex items-center justify-center p-2 cursor-pointer hover:border-amber-400/50 transition-colors"
+                    >
+                      {selectedDetailRecord.promo_proof_url.toLowerCase().includes(".pdf") ? (
+                        <iframe
+                          src={selectedDetailRecord.promo_proof_url}
+                          title="Preview Bukti Promo"
+                          className="w-full h-40 pointer-events-none"
+                        />
+                      ) : (
+                        <img
+                          src={selectedDetailRecord.promo_proof_url}
+                          alt="Bukti Promo Thumbnail"
+                          className="max-h-44 object-contain rounded"
+                        />
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* 4. Group / Bundling Info (if applicable) */}
@@ -1501,11 +1552,19 @@ export default function FestivalDatabase() {
               </div>
             </div>
             <div className="p-4 overflow-auto flex items-center justify-center bg-black/60 min-h-[300px]">
-              <img
-                src={imagePreview.url}
-                alt={imagePreview.title}
-                className="max-h-[70vh] max-w-full object-contain rounded-lg border border-white/10 shadow-lg"
-              />
+              {imagePreview.url.toLowerCase().includes(".pdf") ? (
+                <iframe
+                  src={imagePreview.url}
+                  title={imagePreview.title}
+                  className="w-full h-[70vh] rounded-lg border-0 bg-white"
+                />
+              ) : (
+                <img
+                  src={imagePreview.url}
+                  alt={imagePreview.title}
+                  className="max-h-[70vh] max-w-full object-contain rounded-lg border border-white/10 shadow-lg"
+                />
+              )}
             </div>
           </div>
         </div>

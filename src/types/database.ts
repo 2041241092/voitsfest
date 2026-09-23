@@ -81,6 +81,7 @@ export interface Transaction {
   student_id_number?: string | null;
   student_card_url?: string | null;
   promo_id?: string | null;
+  promo_proof_url?: string | null;
 }
 
 export interface Ticket {
@@ -105,6 +106,46 @@ export interface Ticket {
   whatsapp?: string | null;
 }
 
+export interface ColorFunRegistration {
+  id: string;
+  user_id: string | null;
+  nama_lengkap: string;
+  whatsapp: string;
+  email: string;
+  kategori_peserta: string;
+  nomor_bib?: number | null;
+  group_id?: string | null;
+  is_primary: boolean;
+  ticket_phase?: string | null;
+  promo_id?: string | null;
+  amount_paid: number;
+  payment_status: string;
+  bukti_transfer_url?: string | null;
+  promo_proof_url?: string | null;
+  ktm_url?: string | null;
+  created_at: string;
+}
+
+export interface FestivalRegistration {
+  id: string;
+  user_id: string | null;
+  nama_lengkap: string;
+  whatsapp: string;
+  email: string;
+  kategori_peserta: string;
+  nomor_bib?: number | null;
+  group_id?: string | null;
+  is_primary: boolean;
+  ticket_phase?: string | null;
+  promo_id?: string | null;
+  amount_paid: number;
+  payment_status: string;
+  bukti_transfer_url?: string | null;
+  promo_proof_url?: string | null;
+  ktm_url?: string | null;
+  created_at: string;
+}
+
 export interface CmsSetting {
   key: string;
   value: unknown;
@@ -127,6 +168,11 @@ export interface Promo {
   kuota_terpakai?: number | null;
   kapasitas?: number | null;
   kategori_peserta?: "Semua" | "Umum" | "Mahasiswa ITS" | string | null;
+  special_terms?: string[] | string | null;
+  terms_and_conditions?: string[] | string | null;
+  requires_proof_file?: boolean | null;
+  proof_instruction?: string | null;
+  proof_instructions?: string | null;
 }
 
 export interface ExtraParticipant {

@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback, useMemo } from "react";
 import { createClient } from "@/lib/supabase/client";
-import { Filter, Eye, CheckCircle, XCircle, RotateCw, AlertCircle, Download, Users, X, Search, ChevronLeft, ChevronRight, ExternalLink } from "lucide-react";
+import { Filter, Eye, CheckCircle, XCircle, RotateCw, AlertCircle, Download, Users, X, Search, ChevronLeft, ChevronRight, ExternalLink, FileCheck } from "lucide-react";
 import { formatBIB, formatBIBCSV, formatFestivalParticipant, formatFestivalParticipantCSV, downloadCSV } from "@/lib/bib";
 import { decrementPromoQuota, rollbackPromoQuotaOnReject } from "@/lib/promo";
 import { formatDisplayWIB } from "@/lib/timeUtils";
@@ -38,6 +38,7 @@ export type UnifiedPaymentRecord = {
   ticket_phase?: string | null;
   promo_id?: string | null;
   payment_proof_url: string;
+  promo_proof_url?: string | null;
   status: "Pending" | "Verified" | "Rejected";
   ticket_qr_code?: string | null;
   created_at: string;
@@ -140,6 +141,7 @@ export default function PaymentVerification({ onTransactionUpdated }: PaymentVer
           is_primary: c.is_primary ?? null,
           extra_members: extraMembers,
           payment_proof_url: c.bukti_transfer_url || "",
+          promo_proof_url: c.promo_proof_url || null,
           status,
           ticket_qr_code: c.ticket_qr_code || null,
           created_at: c.created_at,
@@ -203,6 +205,7 @@ export default function PaymentVerification({ onTransactionUpdated }: PaymentVer
           is_primary: f.is_primary ?? null,
           extra_members: extraMembers,
           payment_proof_url: f.bukti_transfer_url || "",
+          promo_proof_url: f.promo_proof_url || null,
           status,
           ticket_qr_code: f.ticket_qr_code || null,
           created_at: f.created_at,
@@ -232,6 +235,7 @@ export default function PaymentVerification({ onTransactionUpdated }: PaymentVer
             ticket_phase: tx.ticket_phase || null,
             promo_id: tx.promo_id || null,
             payment_proof_url: tx.payment_proof_url || "",
+            promo_proof_url: tx.promo_proof_url || null,
             status,
             created_at: tx.created_at,
           });
@@ -1140,23 +1144,42 @@ export default function PaymentVerification({ onTransactionUpdated }: PaymentVer
                     </span>
                   </td>
                   <td className="p-4 py-3.5 align-middle">
-                    {item.payment_proof_url ? (
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setImagePreview({
-                            url: item.payment_proof_url,
-                            title: `Bukti Transfer - ${item.participant_name} (${item.sub_event_type})`,
-                          })
-                        }
-                        className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-white/5 border border-white/10 hover:bg-white/10 hover:border-secondary/50 transition-all text-xs font-medium text-on-surface-variant hover:text-secondary cursor-pointer"
-                        title="Lihat Bukti Pembayaran"
-                      >
-                        <Eye className="w-3.5 h-3.5" /> Lihat Bukti
-                      </button>
-                    ) : (
-                      <span className="text-xs text-on-surface-variant/50 italic">Tidak ada</span>
-                    )}
+                    <div className="flex flex-col gap-1.5 items-start">
+                      {item.payment_proof_url ? (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setImagePreview({
+                              url: item.payment_proof_url,
+                              title: `Bukti Transfer - ${item.participant_name} (${item.sub_event_type})`,
+                            })
+                          }
+                          className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-white/5 border border-white/10 hover:bg-white/10 hover:border-secondary/50 transition-all text-xs font-medium text-on-surface-variant hover:text-secondary cursor-pointer"
+                          title="Lihat Bukti Transfer Pembayaran"
+                        >
+                          <Eye className="w-3.5 h-3.5" /> Lihat Bukti
+                        </button>
+                      ) : (
+                        <span className="text-xs text-on-surface-variant/50 italic">Tidak ada bukti</span>
+                      )}
+
+                      {item.promo_proof_url && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setImagePreview({
+                              url: item.promo_proof_url!,
+                              title: `Bukti Persyaratan Promo - ${item.participant_name} (${item.sub_event_type})`,
+                            })
+                          }
+                          className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-amber-500/15 border border-amber-500/30 hover:bg-amber-500/25 transition-all text-[11px] font-semibold text-amber-300 hover:text-amber-200 cursor-pointer shadow-sm"
+                          title="Lihat Berkas Bukti Syarat Promo"
+                        >
+                          <FileCheck className="w-3.5 h-3.5 text-amber-400" />
+                          <span>Lihat Bukti Promo</span>
+                        </button>
+                      )}
+                    </div>
                   </td>
                   <td className="p-4 py-3.5 text-xs text-on-surface-variant font-mono align-middle">
                     {formatDisplayWIB(item.created_at)}
@@ -1298,6 +1321,24 @@ export default function PaymentVerification({ onTransactionUpdated }: PaymentVer
                 <p className="text-xs text-on-surface-variant mt-0.5">
                   Pendaftar Utama: <span className="text-white font-semibold">{membersModalRecord.participant_name}</span> ({membersModalRecord.sub_event_type})
                 </p>
+                {membersModalRecord.promo_proof_url && (
+                  <div className="mt-2.5">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setImagePreview({
+                          url: membersModalRecord.promo_proof_url!,
+                          title: `Bukti Persyaratan Promo - ${membersModalRecord.participant_name} (${membersModalRecord.sub_event_type})`,
+                        })
+                      }
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-500/15 border border-amber-500/30 hover:bg-amber-500/25 transition-all text-xs font-semibold text-amber-300 hover:text-amber-200 cursor-pointer shadow-sm"
+                      title="Lihat Berkas Bukti Syarat Promo"
+                    >
+                      <FileCheck className="w-3.5 h-3.5 text-amber-400" />
+                      <span>Lihat Bukti Promo</span>
+                    </button>
+                  </div>
+                )}
               </div>
               <button
                 type="button"
@@ -1413,12 +1454,20 @@ export default function PaymentVerification({ onTransactionUpdated }: PaymentVer
               </div>
             </div>
 
-            <div className="max-h-[70vh] overflow-auto rounded-xl border border-white/10 bg-black/50 p-2 flex items-center justify-center">
-              <img
-                src={imagePreview.url}
-                alt={imagePreview.title}
-                className="max-h-[65vh] max-w-full object-contain rounded-lg shadow-lg"
-              />
+            <div className="max-h-[70vh] overflow-auto rounded-xl border border-white/10 bg-black/50 p-2 flex items-center justify-center min-h-[300px]">
+              {imagePreview.url.toLowerCase().includes(".pdf") ? (
+                <iframe
+                  src={imagePreview.url}
+                  title={imagePreview.title}
+                  className="w-full h-[65vh] rounded-lg border-0 bg-white"
+                />
+              ) : (
+                <img
+                  src={imagePreview.url}
+                  alt={imagePreview.title}
+                  className="max-h-[65vh] max-w-full object-contain rounded-lg shadow-lg"
+                />
+              )}
             </div>
           </div>
         </div>

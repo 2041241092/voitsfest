@@ -27,7 +27,8 @@ import {
   ChevronLeft,
   ChevronRight,
   ChevronsLeft,
-  ChevronsRight
+  ChevronsRight,
+  FileCheck
 } from "lucide-react";
 import { formatBIB, formatBIBCSV, downloadCSV } from "@/lib/bib";
 import { decrementPromoQuota, rollbackPromoQuotaOnReject } from "@/lib/promo";
@@ -53,6 +54,7 @@ export type ColorfunRegistration = {
   riwayat_alergi?: string | null;
   rekening_pengirim?: string | null;
   bukti_transfer_url?: string | null;
+  promo_proof_url?: string | null;
   payment_status: string;
   amount_paid?: number | null;
   ticket_phase?: string | null;
@@ -806,6 +808,17 @@ export default function CFRDatabase() {
                           <span className="text-[11px] text-slate-400 font-mono truncate max-w-[150px]" title={row.rekening_pengirim ? `Pengirim: ${row.rekening_pengirim}` : "Rekening pengirim tidak dicantumkan"}>
                             {row.rekening_pengirim ? `a.n ${row.rekening_pengirim}` : "-"}
                           </span>
+                          {row.promo_proof_url && (
+                            <button
+                              type="button"
+                              onClick={() => setImagePreview({ url: row.promo_proof_url!, title: `Bukti Promo - ${row.nama_lengkap}` })}
+                              className="inline-flex items-center gap-1 text-[11px] font-semibold text-amber-300 hover:text-amber-200 mt-1 cursor-pointer"
+                              title="Lihat Berkas Bukti Syarat Promo"
+                            >
+                              <FileCheck className="w-3 h-3 text-amber-400" />
+                              <span>Lihat Bukti Promo</span>
+                            </button>
+                          )}
                         </div>
                       </div>
                     </td>
@@ -1503,8 +1516,8 @@ export default function CFRDatabase() {
                   </div>
                 </div>
 
-                {/* Previews of Bukti Bayar & KTM */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2">
+                {/* Previews of Bukti Bayar & KTM & Bukti Promo */}
+                <div className={`grid grid-cols-1 ${selectedDetailRecord.promo_proof_url ? "sm:grid-cols-3" : "sm:grid-cols-2"} gap-4 pt-2`}>
                   {/* Bukti Bayar */}
                   <div className="p-3 bg-black/30 rounded-xl border border-white/10 space-y-2">
                     <div className="flex items-center justify-between">
@@ -1578,6 +1591,48 @@ export default function CFRDatabase() {
                       </div>
                     )}
                   </div>
+
+                  {/* Bukti Persyaratan Promo */}
+                  {selectedDetailRecord.promo_proof_url && (
+                    <div className="p-3 bg-black/30 rounded-xl border border-amber-500/30 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-semibold text-amber-300 flex items-center gap-1.5">
+                          <FileCheck className="w-3.5 h-3.5 text-amber-400" />
+                          Bukti Syarat Promo
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setImagePreview({ url: selectedDetailRecord.promo_proof_url!, title: `Bukti Promo - ${selectedDetailRecord.nama_lengkap}` })}
+                          className="text-[11px] text-amber-400 hover:underline flex items-center gap-1 cursor-pointer"
+                        >
+                          <Maximize2 className="w-3 h-3" />
+                          <span>Perbesar</span>
+                        </button>
+                      </div>
+                      <div 
+                        onClick={() => setImagePreview({ url: selectedDetailRecord.promo_proof_url!, title: `Bukti Promo - ${selectedDetailRecord.nama_lengkap}` })}
+                        className="w-full h-44 rounded-lg overflow-hidden border border-amber-500/20 bg-black/40 relative group cursor-pointer flex items-center justify-center"
+                      >
+                        {selectedDetailRecord.promo_proof_url.toLowerCase().includes(".pdf") ? (
+                          <iframe
+                            src={selectedDetailRecord.promo_proof_url}
+                            title="Preview Bukti Promo"
+                            className="w-full h-full pointer-events-none"
+                          />
+                        ) : (
+                          <img 
+                            src={selectedDetailRecord.promo_proof_url} 
+                            alt="Bukti Promo" 
+                            className="w-full h-full object-contain"
+                          />
+                        )}
+                        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity text-white text-xs font-semibold gap-1.5">
+                          <Maximize2 className="w-4 h-4" />
+                          <span>Klik untuk Memperbesar</span>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
               </div>
@@ -1636,12 +1691,20 @@ export default function CFRDatabase() {
               </div>
             </div>
 
-            <div className="max-h-[75vh] overflow-auto rounded-xl border border-white/20 bg-black/60 p-2 shadow-2xl">
-              <img 
-                src={imagePreview.url} 
-                alt={imagePreview.title} 
-                className="max-h-[70vh] max-w-full object-contain rounded-lg mx-auto"
-              />
+            <div className="max-h-[75vh] w-full overflow-auto rounded-xl border border-white/20 bg-black/60 p-2 shadow-2xl flex items-center justify-center">
+              {imagePreview.url.toLowerCase().includes(".pdf") ? (
+                <iframe
+                  src={imagePreview.url}
+                  title={imagePreview.title}
+                  className="w-full h-[70vh] rounded-lg border-0 bg-white"
+                />
+              ) : (
+                <img 
+                  src={imagePreview.url} 
+                  alt={imagePreview.title} 
+                  className="max-h-[70vh] max-w-full object-contain rounded-lg mx-auto"
+                />
+              )}
             </div>
           </div>
         </div>

@@ -88,43 +88,46 @@ export function isStatusPending(status: unknown): boolean {
 }
 
 /**
- * Determines whether a registration record belongs to the active registration phase.
- * Considers ticket_phase matching, created_at range within phase start/end dates,
- * or fallback to active phase if no dates configured.
+ * Determines whether a registration record belongs to the active registration phase milestone.
+ * - Resolves string mismatches on ticket_phase (stripping promo tags like [PROMO:uuid:qty]).
+ * - Uses flexible case-insensitive matching (ilike semantics).
+ * - Implements cumulative milestone aggregation up to the active milestone: preserves
+ *   registered participants up to the current milestone rather than resetting to 0
+ *   when a new phase is created.
  */
-function isRecordInPhase(
+export function isRecordInPhase(
   record: { ticket_phase?: string | null; created_at?: string | null },
   phase: string,
   startDate?: string | null,
   endDate?: string | null
 ): boolean {
-  // 1. If record has ticket_phase that matches the current phase name
-  if (record.ticket_phase) {
-    const cleanRecordPhase = record.ticket_phase.replace(/\[PROMO:.*?\]/, "").trim().toLowerCase();
-    const cleanTargetPhase = phase.trim().toLowerCase();
-    if (cleanRecordPhase && (cleanRecordPhase.includes(cleanTargetPhase) || cleanTargetPhase.includes(cleanRecordPhase))) {
-      return true;
-    }
-  }
-
-  // 2. If phase has explicit start/end dates, verify created_at falls into the date range
-  if (startDate && record.created_at) {
-    const startObj = parseWibDate(startDate);
-    const endObj = endDate ? parseWibDate(endDate) : null;
+  // 1. Boundary check: if active phase has an explicit end_date, registrations created
+  // strictly after the end_date belong to a subsequent period and are excluded.
+  if (endDate && record.created_at) {
+    const endObj = parseWibDate(endDate);
     const recObj = parseWibDate(record.created_at);
-    if (startObj && recObj) {
-      if (recObj.getTime() < startObj.getTime()) return false;
-      if (endObj && recObj.getTime() > endObj.getTime()) return false;
-      return true;
+    if (endObj && recObj && recObj.getTime() > endObj.getTime()) {
+      return false;
     }
   }
 
-  // 3. Fallback: if no explicit dates configured and ticket_phase is not explicitly for another known phase
-  if (!startDate && (!record.ticket_phase || record.ticket_phase.trim() === "")) {
-    return true;
+  // 2. Flexible ticket_phase string matching (ilike semantics):
+  // Clean off any promo tag pattern [PROMO:uuid:qty] or [PROMO:...]
+  if (record.ticket_phase && phase) {
+    const cleanRecordPhase = record.ticket_phase.replace(/\[PROMO:.*?\]/gi, "").trim().toLowerCase();
+    const cleanTargetPhase = phase.trim().toLowerCase();
+    if (cleanRecordPhase && cleanTargetPhase) {
+      if (cleanRecordPhase.includes(cleanTargetPhase) || cleanTargetPhase.includes(cleanRecordPhase)) {
+        return true;
+      }
+    }
   }
 
-  return false;
+  // 3. Cumulative milestone aggregation:
+  // The phase quota represents cumulative progress (e.g. Pre Sale 1 + Pre Sale 2 combined).
+  // All valid registered participants created up to the active milestone are retained
+  // rather than resetting to 0 on new phase creation.
+  return true;
 }
 
 /**
@@ -216,7 +219,7 @@ function buildSubEventQuota(
  */
 export function isRegularRegistration(record: { promo_id?: string | null; ticket_phase?: string | null }): boolean {
   if (record.promo_id && String(record.promo_id).trim() !== "") return false;
-  if (record.ticket_phase && record.ticket_phase.includes("[PROMO:")) return false;
+  if (record.ticket_phase && /\[PROMO:/i.test(record.ticket_phase)) return false;
   return true;
 }
 
@@ -264,15 +267,17 @@ export async function fetchAllSubEventQuotas(): Promise<SubEventQuotaMap> {
     let festApproved = 0;
     let festPhaseUsed = 0;
     for (const r of festRows) {
-      const isPending = isStatusPending(r.payment_status);
-      const isApproved = isStatusApproved(r.payment_status);
-      if (isPending) festPending++;
-      else if (isApproved) festApproved++;
-      if (isPending || isApproved) {
-        // Phase Quota: strictly regular ticket registrations (promo_id IS NULL and NOT bundle)
-        if (isRegularRegistration(r) && isRecordInPhase(r, festTier.phase, festTier.start_date, festTier.end_date)) {
-          festPhaseUsed++;
-        }
+      if (!isStatusUsed(r.payment_status)) continue;
+
+      if (isStatusApproved(r.payment_status)) {
+        festApproved++;
+      } else {
+        festPending++;
+      }
+
+      // Phase Quota: Cumulative milestone up to active phase
+      if (isRecordInPhase(r, festTier.phase, festTier.start_date, festTier.end_date)) {
+        festPhaseUsed++;
       }
     }
     // Overall Event Capacity: ALL participants (Regular + Bundling)
@@ -285,15 +290,17 @@ export async function fetchAllSubEventQuotas(): Promise<SubEventQuotaMap> {
     let cfrApproved = 0;
     let cfrPhaseUsed = 0;
     for (const r of cfrRows) {
-      const isPending = isStatusPending(r.payment_status);
-      const isApproved = isStatusApproved(r.payment_status);
-      if (isPending) cfrPending++;
-      else if (isApproved) cfrApproved++;
-      if (isPending || isApproved) {
-        // Phase Quota: strictly regular ticket registrations (promo_id IS NULL and NOT bundle)
-        if (isRegularRegistration(r) && isRecordInPhase(r, cfrTier.phase, cfrTier.start_date, cfrTier.end_date)) {
-          cfrPhaseUsed++;
-        }
+      if (!isStatusUsed(r.payment_status)) continue;
+
+      if (isStatusApproved(r.payment_status)) {
+        cfrApproved++;
+      } else {
+        cfrPending++;
+      }
+
+      // Phase Quota: Cumulative milestone up to active phase
+      if (isRecordInPhase(r, cfrTier.phase, cfrTier.start_date, cfrTier.end_date)) {
+        cfrPhaseUsed++;
       }
     }
     // Overall Event Capacity: ALL participants (Regular + Bundling)
@@ -308,15 +315,14 @@ export async function fetchAllSubEventQuotas(): Promise<SubEventQuotaMap> {
     for (const r of bpcRows) {
       const txInfo = txMap.get(r.id);
       const effectiveStatus = (txInfo && txInfo.subEvent.includes("BPC")) ? txInfo.status : normalizeStatus(r.status);
-      if (effectiveStatus === "rejected") {
+      if (!isStatusUsed(effectiveStatus)) {
         continue; // Released
       } else if (isStatusApproved(effectiveStatus)) {
         bpcApproved++;
       } else {
         bpcPending++;
       }
-      const isRegular = isRegularRegistration({ promo_id: txInfo?.promoId, ticket_phase: txInfo?.ticketPhase });
-      if (isRegular && isRecordInPhase({ ticket_phase: txInfo?.ticketPhase, created_at: r.created_at }, bpcTier.phase, bpcTier.start_date, bpcTier.end_date)) {
+      if (isRecordInPhase({ ticket_phase: txInfo?.ticketPhase, created_at: r.created_at }, bpcTier.phase, bpcTier.start_date, bpcTier.end_date)) {
         bpcPhaseUsed++;
       }
     }
@@ -331,15 +337,14 @@ export async function fetchAllSubEventQuotas(): Promise<SubEventQuotaMap> {
     for (const r of bccRows) {
       const txInfo = txMap.get(r.id);
       const effectiveStatus = (txInfo && txInfo.subEvent.includes("BCC")) ? txInfo.status : normalizeStatus(r.status);
-      if (effectiveStatus === "rejected") {
+      if (!isStatusUsed(effectiveStatus)) {
         continue; // Released
       } else if (isStatusApproved(effectiveStatus)) {
         bccApproved++;
       } else {
         bccPending++;
       }
-      const isRegular = isRegularRegistration({ promo_id: txInfo?.promoId, ticket_phase: txInfo?.ticketPhase });
-      if (isRegular && isRecordInPhase({ ticket_phase: txInfo?.ticketPhase, created_at: r.created_at }, bccTier.phase, bccTier.start_date, bccTier.end_date)) {
+      if (isRecordInPhase({ ticket_phase: txInfo?.ticketPhase, created_at: r.created_at }, bccTier.phase, bccTier.start_date, bccTier.end_date)) {
         bccPhaseUsed++;
       }
     }
@@ -354,15 +359,14 @@ export async function fetchAllSubEventQuotas(): Promise<SubEventQuotaMap> {
     for (const r of tenRows) {
       const txInfo = txMap.get(r.id);
       const effectiveStatus = (txInfo && txInfo.subEvent.includes("TENANT")) ? txInfo.status : normalizeStatus(r.status);
-      if (effectiveStatus === "rejected") {
+      if (!isStatusUsed(effectiveStatus)) {
         continue; // Released
       } else if (isStatusApproved(effectiveStatus)) {
         tenApproved++;
       } else {
         tenPending++;
       }
-      const isRegular = isRegularRegistration({ promo_id: txInfo?.promoId, ticket_phase: txInfo?.ticketPhase });
-      if (isRegular && isRecordInPhase({ ticket_phase: txInfo?.ticketPhase, created_at: r.created_at }, tenTier.phase, tenTier.start_date, tenTier.end_date)) {
+      if (isRecordInPhase({ ticket_phase: txInfo?.ticketPhase, created_at: r.created_at }, tenTier.phase, tenTier.start_date, tenTier.end_date)) {
         tenPhaseUsed++;
       }
     }
@@ -377,15 +381,14 @@ export async function fetchAllSubEventQuotas(): Promise<SubEventQuotaMap> {
     for (const r of semRows) {
       const txInfo = txMap.get(r.id);
       const effectiveStatus = (txInfo && txInfo.subEvent.includes("SEMINAR")) ? txInfo.status : "pending";
-      if (effectiveStatus === "rejected") {
+      if (!isStatusUsed(effectiveStatus)) {
         continue; // Released
       } else if (isStatusApproved(effectiveStatus)) {
         semApproved++;
       } else {
         semPending++;
       }
-      const isRegular = isRegularRegistration({ promo_id: txInfo?.promoId, ticket_phase: txInfo?.ticketPhase });
-      if (isRegular && isRecordInPhase({ ticket_phase: txInfo?.ticketPhase || null, created_at: r.created_at }, semTier.phase, semTier.start_date, semTier.end_date)) {
+      if (isRecordInPhase({ ticket_phase: txInfo?.ticketPhase || null, created_at: r.created_at }, semTier.phase, semTier.start_date, semTier.end_date)) {
         semPhaseUsed++;
       }
     }

@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
-import { Tag, Plus, Trash2, Calendar, Sparkles, X, Loader2, Banknote, Check, Users, AlertCircle, RefreshCw, Edit, LayoutGrid, List } from "lucide-react";
+import { Tag, Plus, Trash2, Calendar, Sparkles, X, Loader2, Banknote, Check, Users, AlertCircle, RefreshCw, Edit, LayoutGrid, List, Upload, FileCheck } from "lucide-react";
 import { Promo, DiscountType } from "@/types/database";
 import {
   fetchPricingTiers,
@@ -20,6 +20,7 @@ import {
   PromoQuotaStatus,
   dispatchQuotaRefresh,
 } from "@/lib/quota";
+import { extractSpecialTerms } from "@/lib/promo";
 import {
   getInputValue,
   formatTableDate,
@@ -79,6 +80,9 @@ export default function PromoManager({ onToast }: PromoManagerProps) {
     kuota_maksimal: "",
     kapasitas: "1",
     kategori_peserta: "Semua",
+    special_terms: [] as string[],
+    requires_proof_file: false,
+    proof_instruction: "",
     start_date: "",
     end_date: "",
     is_active: true,
@@ -95,6 +99,9 @@ export default function PromoManager({ onToast }: PromoManagerProps) {
     kuota_maksimal: "",
     kapasitas: "1",
     kategori_peserta: "Semua",
+    special_terms: [] as string[],
+    requires_proof_file: false,
+    proof_instruction: "",
     start_date: getLocalDatetimeString(new Date()),
     end_date: getLocalDatetimeString(new Date(Date.now() + 30 * 86400000)),
     is_active: true,
@@ -428,68 +435,96 @@ export default function PromoManager({ onToast }: PromoManagerProps) {
 
     setSubmitting(true);
     try {
-      const newPromoPayload = {
+      // 1. Form State to Payload Sanitization (Create & Edit Modal)
+      // Transform Special Terms Array: Handle both array of objects [{ text: '...' }] and array of strings
+      const sanitizedSpecialTerms: string[] = Array.isArray(form.special_terms)
+        ? form.special_terms
+            .map((item: any) => (typeof item === "string" ? item : item?.text || item?.value || ""))
+            .map((str: string) => String(str).trim())
+            .filter((str: string) => str.length > 0)
+        : [];
+
+      // Boolean Cast for Proof Requirement
+      const sanitizedRequiresProof: boolean = Boolean(form.requires_proof_file);
+
+      // Normalize discount_type to valid PostgreSQL enum ('percent' | 'nominal' | 'bundling')
+      let normalizedDiscountType: DiscountType = "percent";
+      const dtRaw = String(form.discount_type || "").toLowerCase();
+      if (dtRaw === "percentage" || dtRaw === "percent") {
+        normalizedDiscountType = "percent";
+      } else if (dtRaw === "fixed" || dtRaw === "nominal") {
+        normalizedDiscountType = "nominal";
+      } else if (dtRaw === "bundling" || dtRaw === "bundle_price" || dtRaw === "bundle") {
+        normalizedDiscountType = "bundling";
+      }
+
+      // Explicitly include both properties in Mutation Payloads (Do NOT include proof_instructions / terms_and_conditions)
+      const payload: Record<string, any> = {
         title: form.title.trim(),
-        description: form.description.trim(),
-        discount_type: form.discount_type,
-        discount_value: parseFloat(form.discount_value) || 0,
+        description: form.description ? form.description.trim() : "",
         target_event: form.target_event,
-        kuota_maksimal: kuotaMax,
+        kuota_maksimal: kuotaMax, // Integer or null if unlimited
         kuota_terpakai: 0,
         kapasitas: parseInt(form.kapasitas, 10) || 1,
         kategori_peserta: form.kategori_peserta || "Semua",
+        discount_type: normalizedDiscountType,
+        discount_value: Number(form.discount_value) || 0,
         start_date: formattedStartDate,
         end_date: formattedEndDate,
-        is_active: form.is_active,
+        is_active: Boolean(form.is_active),
+        special_terms: sanitizedSpecialTerms,
+        requires_proof_file: sanitizedRequiresProof,
+        proof_instruction: (form.proof_instruction || "").trim(),
       };
 
-      let { data, error } = await supabase
-        .from("promos")
-        .insert(newPromoPayload)
-        .select()
-        .single();
+      const toast = {
+        success: (msg: string) => onToast?.("success", msg),
+        error: (msg: string) => onToast?.("error", msg),
+      };
 
-      // Graceful fallback if target_event, kuota, kapasitas, or kategori_peserta columns have not yet been migrated in Supabase table
-      if (error && (error.message?.includes("target_event") || error.message?.includes("kuota") || error.message?.includes("kapasitas") || error.message?.includes("kategori_peserta") || error.code === "PGRST204")) {
-        console.warn("Retrying promo insert with basic schema fallback:", error.message);
-        const { target_event: _te, kuota_maksimal: _km, kuota_terpakai: _kt, kapasitas: _kap, kategori_peserta: _kp, ...fallbackPayload } = newPromoPayload;
-        const retry = await supabase.from("promos").insert(fallbackPayload).select().single();
-        if (!retry.error) {
-          error = null;
-          data = retry.data;
-        }
-      }
+      const { data, error } = await supabase
+        .from("promos")
+        .insert([payload])
+        .select();
 
       if (error) {
-        onToast?.("error", `Gagal membuat promo: ${error.message}`);
-      } else {
-        onToast?.("success", `Promo "${form.title}" berhasil ditambahkan!`);
-        if (data) {
-          setPromos((prev) => [data as Promo, ...prev]);
-        }
-        setModalOpen(false);
-        // Reset form
-        setForm({
-          title: "",
-          description: "",
-          discount_type: "percent",
-          discount_value: "",
-          target_event: "ColorFun Run",
-          is_unlimited: false,
-          kuota_maksimal: "",
-          kapasitas: "1",
-          kategori_peserta: "Semua",
-          start_date: getLocalDatetimeString(new Date()),
-          end_date: getLocalDatetimeString(new Date(Date.now() + 30 * 86400000)),
-          is_active: true,
-        });
-        router.refresh();
-        await fetchPromos(true);
-        await fetchQuotas();
-        dispatchQuotaRefresh();
+        console.error("Supabase Promo Insert Error:", error.message, error.details);
+        toast.error(`Gagal membuat promo: ${error.message}`);
+        return;
       }
+
+      toast.success("Promo berhasil ditambahkan!");
+      if (data && data[0]) {
+        setPromos((prev) => [data[0] as Promo, ...prev]);
+      }
+      setModalOpen(false);
+
+      // Reset form
+      setForm({
+        title: "",
+        description: "",
+        discount_type: "percent",
+        discount_value: "",
+        target_event: "ColorFun Run",
+        is_unlimited: false,
+        kuota_maksimal: "",
+        kapasitas: "1",
+        kategori_peserta: "Semua",
+        special_terms: [],
+        requires_proof_file: false,
+        proof_instruction: "",
+        start_date: getLocalDatetimeString(new Date()),
+        end_date: getLocalDatetimeString(new Date(Date.now() + 30 * 86400000)),
+        is_active: true,
+      });
+
+      router.refresh();
+      await fetchPromos(true);
+      await fetchQuotas();
+      dispatchQuotaRefresh();
     } catch (err: any) {
-      onToast?.("error", `Gagal membuat promo: ${err.message}`);
+      console.error("Promo creation exception:", err);
+      onToast?.("error", `Gagal membuat promo: ${err.message || "Terjadi kesalahan internal"}`);
     } finally {
       setSubmitting(false);
     }
@@ -499,16 +534,33 @@ export default function PromoManager({ onToast }: PromoManagerProps) {
   const openEditModal = (promo: Promo) => {
     setEditingPromo(promo);
     const isUnlimited = promo.kuota_maksimal === null || promo.kuota_maksimal === undefined;
+    const targetEvt = PROMO_TARGET_EVENTS.includes(promo.target_event as any)
+      ? (promo.target_event as PromoTargetEvent)
+      : "ColorFun Run";
+
+    // 2. Edit Modal Initialization (Pre-fill Data)
+    // special_terms: Pre-populate the dynamic input rows with currentPromo.special_terms || []
+    const existingTerms: string[] = Array.isArray(promo.special_terms)
+      ? promo.special_terms
+          .map((item: any) => (typeof item === "string" ? item : item?.text || item?.value || ""))
+          .map((str: string) => String(str).trim())
+          .filter((str: string) => str.length > 0)
+      : extractSpecialTerms(promo);
+
     setEditForm({
       title: promo.title || "",
       description: promo.description || "",
       discount_type: promo.discount_type || "percent",
-      discount_value: String(promo.discount_value || ""),
-      target_event: (promo.target_event as PromoTargetEvent) || "Festival",
+      discount_value: String(promo.discount_value ?? ""),
+      target_event: targetEvt,
       is_unlimited: isUnlimited,
       kuota_maksimal: isUnlimited ? "" : String(promo.kuota_maksimal ?? ""),
       kapasitas: String(promo.kapasitas || 1),
       kategori_peserta: promo.kategori_peserta || "Semua",
+      special_terms: existingTerms,
+      // requires_proof_file: Set toggle state to Boolean(currentPromo.requires_proof_file)
+      requires_proof_file: Boolean(promo.requires_proof_file),
+      proof_instruction: promo.proof_instruction || promo.proof_instructions || "",
       start_date: getInputValue(promo.start_date),
       end_date: getInputValue(promo.end_date),
       is_active: promo.is_active ?? true,
@@ -550,43 +602,74 @@ export default function PromoManager({ onToast }: PromoManagerProps) {
 
     setSavingEdit(true);
     try {
+      // 1. Form State to Payload Sanitization (Create & Edit Modal)
+      // Transform Special Terms Array: Handle both array of objects [{ text: '...' }] and array of strings
+      const sanitizedSpecialTerms: string[] = Array.isArray(editForm.special_terms)
+        ? editForm.special_terms
+            .map((item: any) => (typeof item === "string" ? item : item?.text || item?.value || ""))
+            .map((str: string) => String(str).trim())
+            .filter((str: string) => str.length > 0)
+        : [];
+
+      // Boolean Cast for Proof Requirement
+      const sanitizedRequiresProof: boolean = Boolean(editForm.requires_proof_file);
+
+      let normalizedDiscountType: DiscountType = "percent";
+      const dtRaw = String(editForm.discount_type || "").toLowerCase();
+      if (dtRaw === "percentage" || dtRaw === "percent") {
+        normalizedDiscountType = "percent";
+      } else if (dtRaw === "fixed" || dtRaw === "nominal") {
+        normalizedDiscountType = "nominal";
+      } else if (dtRaw === "bundling" || dtRaw === "bundle_price" || dtRaw === "bundle") {
+        normalizedDiscountType = "bundling";
+      }
+
+      // Map all edited fields into update payload for Supabase public.promos (Explicitly include special_terms and requires_proof_file)
       const updatePayload: Record<string, any> = {
         title: editForm.title.trim(),
-        description: editForm.description.trim(),
-        discount_type: editForm.discount_type,
-        discount_value: parseFloat(editForm.discount_value) || 0,
+        description: editForm.description ? editForm.description.trim() : "",
+        discount_type: normalizedDiscountType,
+        discount_value: Number(editForm.discount_value) || 0,
         target_event: editForm.target_event,
         kuota_maksimal: kuotaVal,
         kapasitas: parseInt(editForm.kapasitas, 10) || 1,
         kategori_peserta: editForm.kategori_peserta || "Semua",
+        special_terms: sanitizedSpecialTerms,
+        requires_proof_file: sanitizedRequiresProof,
+        proof_instruction: (editForm.proof_instruction || "").trim(),
         start_date: formattedStartDate,
         end_date: formattedEndDate,
-        is_active: editForm.is_active,
+        is_active: Boolean(editForm.is_active),
+      };
+
+      const toast = {
+        success: (msg: string) => onToast?.("success", msg),
+        error: (msg: string) => onToast?.("error", msg),
       };
 
       const { data, error } = await supabase
         .from("promos")
         .update(updatePayload)
         .eq("id", editingPromo.id)
-        .select()
-        .single();
+        .select();
 
       if (error) {
-        throw error;
+        console.error("Supabase Promo Update Error:", error.message, error.details);
+        toast.error(`Gagal memperbarui promo: ${error.message}`);
+        return;
       }
 
-      // Optimistically update local component state immediately so table updates without full manual refresh
-      const updatedPromo: Promo = (data as Promo) || {
+      toast.success("Katalog promo berhasil diperbarui.");
+      const updatedPromo: Promo = (data && data[0] ? data[0] : null) as Promo || {
         ...editingPromo,
         ...updatePayload,
+        kuota_terpakai: editingPromo.kuota_terpakai,
         updated_at: new Date().toISOString(),
       };
       setPromos((prev) =>
         prev.map((p) => (p.id === editingPromo.id ? updatedPromo : p))
       );
       setEditModalOpen(false);
-
-      onToast?.("success", `Promo "${editForm.title}" berhasil diperbarui!`);
 
       // Immediately trigger table refetch & revalidation
       router.refresh();
@@ -597,7 +680,7 @@ export default function PromoManager({ onToast }: PromoManagerProps) {
       window.dispatchEvent(new CustomEvent("admin-refresh-data"));
     } catch (err: any) {
       console.error("Save promo edit error:", err);
-      onToast?.("error", `Gagal memperbarui promo: ${err.message}`);
+      onToast?.("error", `Gagal memperbarui promo: ${err.message || "Terjadi kesalahan internal"}`);
     } finally {
       setSavingEdit(false);
     }
@@ -933,6 +1016,19 @@ export default function PromoManager({ onToast }: PromoManagerProps) {
                             {promo.kategori_peserta}
                           </span>
                         )}
+                        {(() => {
+                          const terms = extractSpecialTerms(promo);
+                          return terms.length > 0 ? (
+                            <span className="text-[9px] font-medium px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300 border border-amber-500/30 font-sans" title={terms.join(" • ")}>
+                              {terms.length} Syarat Khusus
+                            </span>
+                          ) : null;
+                        })()}
+                        {promo.requires_proof_file && (
+                          <span className="text-[9px] font-medium px-1.5 py-0.5 rounded bg-blue-500/15 text-blue-300 border border-blue-500/30 flex items-center gap-1 font-sans" title={promo.proof_instruction || promo.proof_instructions || "Wajib upload berkas bukti persyaratan"}>
+                            <FileCheck className="w-2.5 h-2.5" /> Wajib Bukti
+                          </span>
+                        )}
                       </div>
                     </td>
                     <td className="py-3.5 px-4 font-sans">
@@ -1108,6 +1204,22 @@ export default function PromoManager({ onToast }: PromoManagerProps) {
                         <span className="text-[10px] font-sans font-semibold px-2 py-0.5 rounded border bg-cyan-500/15 text-cyan-300 border-cyan-500/30 inline-flex items-center gap-1">
                           Target: {promo.kategori_peserta || "Semua"}
                         </span>
+
+                        {/* Special Terms Badge */}
+                        {(() => {
+                          const terms = extractSpecialTerms(promo);
+                          return terms.length > 0 ? (
+                            <span className="text-[10px] font-sans font-semibold px-2 py-0.5 rounded border bg-amber-500/15 text-amber-300 border-amber-500/30 inline-flex items-center gap-1" title={terms.join(" • ")}>
+                              Syarat Khusus ({terms.length})
+                            </span>
+                          ) : null;
+                        })()}
+
+                        {promo.requires_proof_file && (
+                          <span className="text-[10px] font-sans font-semibold px-2 py-0.5 rounded border bg-blue-500/15 text-blue-300 border-blue-500/30 inline-flex items-center gap-1" title={promo.proof_instruction || promo.proof_instructions || "Wajib upload berkas bukti persyaratan"}>
+                            <FileCheck className="w-3 h-3" /> Wajib Bukti
+                          </span>
+                        )}
                       </div>
 
                       <h3 className="font-bold text-base text-white">{promo.title}</h3>
@@ -1267,7 +1379,7 @@ export default function PromoManager({ onToast }: PromoManagerProps) {
                   </div>
 
                   <div className="space-y-3 font-poppins">
-                    {/* Fase & Harga */}
+                    {/* Fase & Harga Dasar / Coret */}
                     <div className="p-3 rounded-xl bg-white/[0.02] border border-white/10 flex items-center justify-between">
                       <div>
                         <span className="text-[10px] text-on-surface-variant uppercase tracking-wider block font-semibold">
@@ -1277,10 +1389,13 @@ export default function PromoManager({ onToast }: PromoManagerProps) {
                       </div>
                       <div className="text-right">
                         <span className="text-[10px] text-on-surface-variant uppercase tracking-wider block font-semibold">
-                          Biaya
+                          Biaya Dasar (Coret)
                         </span>
                         <span className="text-xs font-mono font-bold text-[#ffd700]">
                           {formatRupiah(item.price)}
+                        </span>
+                        <span className="text-[9px] text-slate-400 block font-sans">
+                          Harga Normal / Anchor
                         </span>
                       </div>
                     </div>
@@ -1295,7 +1410,7 @@ export default function PromoManager({ onToast }: PromoManagerProps) {
                       </span>
                     </div>
 
-                    {/* Tier 1: Total Kuota (Fase Pendaftaran) */}
+                    {/* Tier 1: Total Kuota (Fase Pendaftaran) - Milestone Indikator */}
                     <div className="p-3 rounded-xl bg-surface-container-high/40 border border-white/5 space-y-1.5 text-xs">
                       <div className="flex justify-between items-center">
                         <div>
@@ -1303,7 +1418,7 @@ export default function PromoManager({ onToast }: PromoManagerProps) {
                             Total Kuota (Fase Pendaftaran)
                           </span>
                           <span className="text-[9.5px] text-secondary font-medium block">
-                            Hanya Tiket Reguler (Non-Promo)
+                            Ambang Batas Kumulatif Fase (Milestone)
                           </span>
                         </div>
                         <span className="font-mono font-bold text-white">
@@ -1328,22 +1443,22 @@ export default function PromoManager({ onToast }: PromoManagerProps) {
                       )}
 
                       <div className="flex justify-between items-center text-[11px]">
-                        <span className="text-on-surface-variant">Sisa Kuota Fase:</span>
-                        <span className={`font-bold font-mono ${isPhaseFull ? "text-error" : "text-emerald-400"}`}>
-                          {isPhaseFull ? "Kuota Fase Habis" : remainingPhase !== null ? `${remainingPhase} Slot (${phasePercent}%)` : "Tanpa Batas"}
+                        <span className="text-on-surface-variant">Milestone Kuota Fase:</span>
+                        <span className={`font-bold font-mono ${isPhaseFull ? "text-amber-300" : "text-emerald-400"}`}>
+                          {isPhaseFull ? "Ambang Fase Tercapai" : remainingPhase !== null ? `${usedInPhase} / ${item.phase_quota} (${phasePercent}%)` : "Tanpa Batas"}
                         </span>
                       </div>
                     </div>
 
-                    {/* Tier 2: Total Kuota (Slot Peserta Sub-Event) */}
+                    {/* Tier 2: Total Kuota (Total Slot Peserta) - Master Kapasitas Internal */}
                     <div className="p-3 rounded-xl bg-surface-container-high/40 border border-white/5 space-y-1.5 text-xs">
                       <div className="flex justify-between items-center">
                         <div>
                           <span className="text-[11px] font-semibold text-on-surface-variant uppercase tracking-wider block">
-                            Total Kuota (Slot Peserta)
+                            Total Kuota (Total Slot Peserta)
                           </span>
                           <span className="text-[9.5px] text-emerald-400 font-medium block">
-                            Kumulatif Reguler + Bundling
+                            Kapasitas Master Panitia (Internal / Admin-Only)
                           </span>
                         </div>
                         <span className="font-mono font-bold text-white">
@@ -1368,9 +1483,9 @@ export default function PromoManager({ onToast }: PromoManagerProps) {
                       )}
 
                       <div className="flex justify-between items-center text-[11px]">
-                        <span className="text-on-surface-variant">Sisa Kapasitas Total:</span>
+                        <span className="text-on-surface-variant">Target Kapasitas Master:</span>
                         <span className={`font-bold font-mono ${isEventFull ? "text-error" : "text-slate-300"}`}>
-                          {isEventFull ? "Kapasitas Penuh" : remainingEvent !== null ? `${remainingEvent} Slot (${eventPercent}%)` : "Tanpa Batas"}
+                          {isEventFull ? "Kapasitas Penuh" : remainingEvent !== null ? `${remainingEvent} Slot Sisa (${eventPercent}%)` : "Tanpa Batas"}
                         </span>
                       </div>
                       <div className="text-[10px] text-right text-on-surface-variant font-mono">
@@ -1625,6 +1740,112 @@ export default function PromoManager({ onToast }: PromoManagerProps) {
                 </div>
               </div>
 
+              {/* Syarat & Ketentuan Khusus Pendaftar (Opsional) */}
+              <div className="p-4 rounded-xl bg-black/40 border border-white/10 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <label className="font-semibold text-white uppercase tracking-wider text-[11px] flex items-center gap-1.5">
+                      <Sparkles className="w-3.5 h-3.5 text-[#ffd700]" />
+                      Syarat &amp; Ketentuan Khusus Pendaftar (Opsional)
+                    </label>
+                    <p className="text-[11px] text-on-surface-variant font-sans mt-0.5">
+                      Poin klausul persyaratan yang wajib disetujui pendaftar saat memilih paket promo ini di formulir pendaftaran.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setForm((prev) => ({
+                        ...prev,
+                        special_terms: [...(prev.special_terms || []), ""],
+                      }));
+                    }}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-secondary/15 hover:bg-secondary/25 text-secondary border border-secondary/30 text-xs font-semibold transition-all cursor-pointer shadow-sm hover:scale-[1.02]"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Tambah Syarat Khusus</span>
+                  </button>
+                </div>
+
+                {(form.special_terms || []).length === 0 ? (
+                  <div className="p-3.5 rounded-xl bg-white/5 border border-dashed border-white/10 text-center text-xs text-slate-400 font-sans">
+                    Belum ada syarat khusus ditambahkan. Paket promo ini dapat langsung dipilih pendaftar tanpa checklist klausul syarat tambahan.
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {form.special_terms.map((term, idx) => (
+                      <div key={idx} className="flex items-center gap-2 animate-in fade-in duration-200">
+                        <span className="w-6 h-6 rounded-full bg-secondary/20 text-secondary border border-secondary/30 flex items-center justify-center text-xs font-bold font-mono shrink-0">
+                          {idx + 1}
+                        </span>
+                        <input
+                          type="text"
+                          value={term}
+                          onChange={(e) => {
+                            const updated = [...form.special_terms];
+                            updated[idx] = e.target.value;
+                            setForm({ ...form, special_terms: updated });
+                          }}
+                          placeholder="Contoh: Wajib upload bukti share ke 3 grup WhatsApp / Follow IG @voitsfest"
+                          className="flex-1 bg-surface-container-high border border-white/15 rounded-xl px-3.5 py-2 text-xs text-white focus:border-secondary outline-none transition-all font-sans"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const updated = form.special_terms.filter((_, i) => i !== idx);
+                            setForm({ ...form, special_terms: updated });
+                          }}
+                          title="Hapus syarat ini"
+                          className="p-2 rounded-lg text-slate-400 hover:text-error hover:bg-white/5 transition-colors cursor-pointer shrink-0"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Wajibkan Upload Bukti Persyaratan (Foto / PDF) */}
+                <div className="pt-3 border-t border-white/10 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="space-y-0.5">
+                      <label className="text-xs font-semibold text-white flex items-center gap-2 cursor-pointer">
+                        <Upload className="w-3.5 h-3.5 text-secondary" />
+                        Wajibkan Upload Bukti Persyaratan (Foto / PDF)
+                      </label>
+                      <p className="text-[11px] text-on-surface-variant font-sans">
+                        Pendaftar wajib melampirkan berkas bukti (screenshot / PDF) sebelum dapat lanjut ke pembayaran.
+                      </p>
+                    </div>
+                    <label className="relative inline-flex items-center cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={form.requires_proof_file}
+                        onChange={(e) => setForm({ ...form, requires_proof_file: e.target.checked })}
+                        className="sr-only peer"
+                      />
+                      <div className="w-9 h-5 bg-surface-variant peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-secondary"></div>
+                    </label>
+                  </div>
+
+                  {form.requires_proof_file && (
+                    <div className="p-3 rounded-xl bg-white/5 border border-white/10 space-y-1.5 animate-in fade-in duration-200">
+                      <label className="text-[11px] font-medium text-slate-300 flex items-center gap-1.5">
+                        <FileCheck className="w-3.5 h-3.5 text-secondary" />
+                        Instruksi Format Bukti (Opsional)
+                      </label>
+                      <input
+                        type="text"
+                        value={form.proof_instruction}
+                        onChange={(e) => setForm({ ...form, proof_instruction: e.target.value })}
+                        placeholder="Contoh: Gabungkan screenshot follow IG & share 3 grup WA ke dalam 1 file PDF atau foto kolase"
+                        className="w-full bg-surface-container-high border border-white/15 rounded-xl px-3.5 py-2 text-xs text-white focus:border-secondary outline-none transition-all font-sans"
+                      />
+                    </div>
+                  )}
+                </div>
+              </div>
+
               <div className="flex items-center gap-3 pt-2">
                 <input
                   type="checkbox"
@@ -1664,37 +1885,120 @@ export default function PromoManager({ onToast }: PromoManagerProps) {
       {/* ── EDIT BUNDLE / PROMO MODAL ── */}
       {editModalOpen && editingPromo && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-150">
-          <div className="bg-[#0B1026] border border-white/20 rounded-2xl p-6 max-w-lg w-full shadow-2xl relative max-h-[90vh] overflow-y-auto">
+          <div className="bg-[#0B1026] border border-white/20 rounded-2xl p-6 max-w-xl w-full shadow-2xl relative max-h-[90vh] overflow-y-auto">
             {/* Modal Header */}
             <div className="flex justify-between items-center mb-5 pb-3 border-b border-white/10">
-              <h3 className="text-lg font-bold text-white flex items-center gap-2">
-                <Edit className="w-5 h-5 text-secondary" />
-                Edit Bundle / Promo
-              </h3>
+              <div>
+                <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                  <Edit className="w-5 h-5 text-secondary" />
+                  Edit Katalog Promo &amp; Bundling
+                </h3>
+                <p className="text-[11px] text-on-surface-variant font-sans mt-0.5">
+                  ID: <span className="font-mono text-secondary">{editingPromo.id}</span>
+                </p>
+              </div>
               <button
                 type="button"
                 onClick={() => setEditModalOpen(false)}
-                className="text-on-surface-variant hover:text-white transition-colors cursor-pointer"
+                className="text-on-surface-variant hover:text-white transition-colors cursor-pointer p-1 rounded-lg hover:bg-white/5"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
+            {/* Visual Indicator: Current Usage Progress & Quota Math */}
+            {(() => {
+              const promoStatus = promoQuotas.find((pq) => pq.promo.id === editingPromo.id);
+              const currentUsed = promoStatus ? promoStatus.usedQuota : (editingPromo.kuota_terpakai ?? 0);
+              const currentPending = promoStatus ? promoStatus.pendingCount : 0;
+              const currentApproved = promoStatus ? promoStatus.approvedCount : currentUsed;
+              const isCurrentUnlimited = editingPromo.kuota_maksimal == null;
+              const originalMax = isCurrentUnlimited ? null : editingPromo.kuota_maksimal;
+
+              // Live quota math based on admin input
+              const isNewUnlimited = editForm.is_unlimited;
+              const newMax = isNewUnlimited ? null : (parseInt(editForm.kuota_maksimal, 10) || 0);
+              const newRemaining = isNewUnlimited ? null : Math.max(0, (newMax ?? 0) - currentUsed);
+              const newUsagePercent = newMax && newMax > 0 ? Math.min(100, Math.round((currentUsed / newMax) * 100)) : 0;
+              const isOverQuota = !isNewUnlimited && newMax !== null && newMax < currentUsed;
+
+              return (
+                <div className="mb-5 p-4 rounded-xl bg-surface-container-high/60 border border-white/10 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-semibold text-white uppercase tracking-wider flex items-center gap-1.5">
+                      <Users className="w-3.5 h-3.5 text-secondary" />
+                      Progres Penggunaan Kuota (Live Counter)
+                    </span>
+                    <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+                      Terpakai: {currentUsed} Peserta
+                    </span>
+                  </div>
+
+                  {/* Usage progress text */}
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between text-xs gap-1 text-slate-300">
+                    <span>
+                      Kuota Terpakai Saat Ini:{" "}
+                      <strong className="text-white font-mono">{currentUsed}</strong> /{" "}
+                      <strong className="text-secondary font-mono">
+                        {isNewUnlimited ? "Tanpa Batas (Unlimited)" : `${newMax} Slot`}
+                      </strong>
+                    </span>
+                    <span className="text-[11px] text-slate-400 font-mono">
+                      ({currentPending} Pending, {currentApproved} Disetujui)
+                    </span>
+                  </div>
+
+                  {/* Progress Bar (if not unlimited) */}
+                  {!isNewUnlimited && newMax !== null && newMax > 0 && (
+                    <div className="space-y-1">
+                      <div className="w-full bg-black/40 rounded-full h-2 overflow-hidden border border-white/10">
+                        <div
+                          className={`h-full transition-all duration-300 rounded-full ${
+                            isOverQuota ? "bg-error" : newUsagePercent >= 90 ? "bg-amber-400" : "bg-secondary"
+                          }`}
+                          style={{ width: `${Math.min(100, newUsagePercent)}%` }}
+                        />
+                      </div>
+                      <div className="flex justify-between text-[10px] font-mono text-slate-400">
+                        <span>Progres Terpakai: {newUsagePercent}%</span>
+                        <span className={newRemaining === 0 ? "text-error font-bold" : "text-emerald-400 font-bold"}>
+                          Sisa Kuota: {newRemaining} Slot
+                        </span>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Over Quota Alert if admin sets max_quota < kuota_terpakai */}
+                  {isOverQuota && (
+                    <div className="p-2.5 rounded-lg bg-error/15 border border-error/30 text-error text-[11px] flex items-center gap-2">
+                      <AlertCircle className="w-4 h-4 shrink-0" />
+                      <span>
+                        <strong>Perhatian:</strong> Kuota maksimal baru ({newMax}) lebih kecil dari kuota yang telah terpakai ({currentUsed}). Promo ini akan otomatis berstatus Habis (Sold Out) pada formulir pendaftaran.
+                      </span>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+
             {/* Form */}
             <form onSubmit={handleSaveEdit} className="flex flex-col gap-4 text-xs font-poppins">
+              {/* Judul Promo / Nama Paket */}
               <div>
                 <label className="block text-on-surface-variant font-semibold mb-1 uppercase tracking-wider">
-                  Judul Promo *
+                  Judul Promo / Nama Paket *
                 </label>
                 <input
                   type="text"
                   required
                   value={editForm.title}
                   onChange={(e) => setEditForm({ ...editForm, title: e.target.value })}
+                  placeholder="e.g. Early Bird Single, Bundle Couple 2 Org, Komunitas 5K"
                   className="w-full bg-surface-container-high border border-white/15 rounded-xl px-3.5 py-2.5 text-sm text-white focus:border-secondary outline-none transition-all"
                 />
               </div>
 
+              {/* Deskripsi Penawaran */}
               <div>
                 <label className="block text-on-surface-variant font-semibold mb-1 uppercase tracking-wider">
                   Deskripsi Penawaran
@@ -1703,8 +2007,157 @@ export default function PromoManager({ onToast }: PromoManagerProps) {
                   rows={2}
                   value={editForm.description}
                   onChange={(e) => setEditForm({ ...editForm, description: e.target.value })}
+                  placeholder="Jelaskan penawaran atau keuntungan khusus promo ini..."
                   className="w-full bg-surface-container-high border border-white/15 rounded-xl px-3.5 py-2 text-sm text-white focus:border-secondary outline-none transition-all"
                 />
+              </div>
+
+              {/* Target Event & Kategori Peserta (Target Kategori) */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-on-surface-variant font-semibold mb-1 uppercase tracking-wider">
+                    Target Event *
+                  </label>
+                  <select
+                    required
+                    value={editForm.target_event}
+                    onChange={(e) => setEditForm({ ...editForm, target_event: e.target.value as PromoTargetEvent })}
+                    className="w-full bg-surface-container-high border border-white/15 rounded-xl px-3 py-2.5 text-xs text-white focus:border-secondary outline-none cursor-pointer"
+                  >
+                    {PROMO_TARGET_EVENTS.map((evt) => (
+                      <option key={evt} value={evt} className="bg-[#0b1026]">
+                        {evt}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-on-surface-variant font-semibold mb-1 uppercase tracking-wider">
+                    Kategori Peserta (Target) *
+                  </label>
+                  <select
+                    required
+                    value={editForm.kategori_peserta}
+                    onChange={(e) => setEditForm({ ...editForm, kategori_peserta: e.target.value })}
+                    className="w-full bg-surface-container-high border border-white/15 rounded-xl px-3 py-2.5 text-xs text-white focus:border-secondary outline-none cursor-pointer font-sans"
+                  >
+                    <option value="Semua" className="bg-[#0b1026]">Semua Kategori (Umum &amp; Mahasiswa ITS)</option>
+                    <option value="Umum" className="bg-[#0b1026]">Khusus Peserta Umum</option>
+                    <option value="Mahasiswa ITS" className="bg-[#0b1026]">Khusus Mahasiswa ITS</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Tipe Pendaftar / Kapasitas Slot Peserta */}
+              <div>
+                <label className="block text-on-surface-variant font-semibold mb-1 uppercase tracking-wider">
+                  Tipe Pendaftar / Kapasitas Slot *
+                </label>
+                <select
+                  required
+                  value={editForm.kapasitas}
+                  onChange={(e) => setEditForm({ ...editForm, kapasitas: e.target.value })}
+                  className="w-full bg-surface-container-high border border-white/15 rounded-xl px-3 py-2.5 text-xs text-white focus:border-secondary outline-none cursor-pointer font-mono"
+                >
+                  <option value="1" className="bg-[#0b1026]">1 Orang (Single / Individu)</option>
+                  <option value="2" className="bg-[#0b1026]">2 Orang (Couple / Duo Bundle)</option>
+                  <option value="3" className="bg-[#0b1026]">3 Orang (Trio Bundle)</option>
+                  <option value="4" className="bg-[#0b1026]">4 Orang (Quad Bundle)</option>
+                  <option value="5" className="bg-[#0b1026]">5 Orang (Group / Rombongan 5 Org)</option>
+                </select>
+              </div>
+
+              {/* Maksimal Kuota Section with Unlimited Toggle */}
+              <div className="p-3.5 rounded-xl bg-black/40 border border-white/10 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <label className="font-semibold text-white uppercase tracking-wider text-[11px] block">
+                      Maksimal Kuota Kapasitas (max_quota) *
+                    </label>
+                    <p className="text-[11px] text-on-surface-variant font-sans">
+                      Atur kuota kapasitas paket atau buat tanpa batas kuota. Admin bebas menaikkan atau menurunkan kuota.
+                    </p>
+                  </div>
+
+                  {/* Unlimited Toggle */}
+                  <label className="flex items-center gap-2 cursor-pointer bg-surface-container-high px-3 py-1.5 rounded-lg border border-white/10 hover:border-secondary/40 transition-all">
+                    <input
+                      type="checkbox"
+                      checked={editForm.is_unlimited}
+                      onChange={(e) => setEditForm({ ...editForm, is_unlimited: e.target.checked })}
+                      className="rounded border-white/20 bg-surface-container-highest text-secondary focus:ring-secondary w-4 h-4 cursor-pointer"
+                    />
+                    <span className="text-xs font-semibold text-white select-none">
+                      Unlimited Kuota
+                    </span>
+                  </label>
+                </div>
+
+                {editForm.is_unlimited ? (
+                  <div className="p-3 rounded-lg bg-cyan-500/10 border border-cyan-500/20 text-cyan-300 text-xs flex items-center gap-2">
+                    <Sparkles className="w-4 h-4 shrink-0 text-cyan-400" />
+                    <span>
+                      <strong>Tanpa Batas Kuota:</strong> Nilai <code className="font-mono">kuota_maksimal</code> diset <code className="font-mono">NULL</code>. Promo ini akan selalu tersedia selama periode aktif.
+                    </span>
+                  </div>
+                ) : (
+                  <div>
+                    <input
+                      type="number"
+                      required
+                      min="1"
+                      value={editForm.kuota_maksimal}
+                      onChange={(e) => setEditForm({ ...editForm, kuota_maksimal: e.target.value })}
+                      placeholder="Masukkan batas kuota, e.g. 50, 100, 250"
+                      className="w-full bg-surface-container-high border border-white/15 rounded-xl px-3.5 py-2.5 text-sm text-white focus:border-secondary outline-none transition-all font-mono"
+                    />
+                  </div>
+                )}
+              </div>
+
+              {/* Tipe Diskon & Nilai Diskon / Harga Bundle */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-on-surface-variant font-semibold mb-1 uppercase tracking-wider">
+                    Tipe Diskon *
+                  </label>
+                  <select
+                    value={editForm.discount_type}
+                    onChange={(e) => setEditForm({ ...editForm, discount_type: e.target.value as DiscountType })}
+                    className="w-full bg-surface-container-high border border-white/15 rounded-xl px-3 py-2.5 text-xs text-white focus:border-secondary outline-none cursor-pointer"
+                  >
+                    <option value="percent" className="bg-[#0b1026]">Persentase Diskon (%)</option>
+                    <option value="nominal" className="bg-[#0b1026]">Potongan Tetap / Nominal Diskon (Rp)</option>
+                    <option value="bundling" className="bg-[#0b1026]">Fixed Bundle Price / Harga Paket Bundling (Rp)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-on-surface-variant font-semibold mb-1 uppercase tracking-wider">
+                    {editForm.discount_type === "bundling"
+                      ? "Harga Paket Bundling (Rp) *"
+                      : editForm.discount_type === "percent"
+                      ? "Persentase Diskon (%) *"
+                      : "Nilai Potongan Diskon (Rp) *"}
+                  </label>
+                  <input
+                    type="number"
+                    required
+                    min="0"
+                    step="any"
+                    value={editForm.discount_value}
+                    onChange={(e) => setEditForm({ ...editForm, discount_value: e.target.value })}
+                    placeholder={
+                      editForm.discount_type === "percent"
+                        ? "e.g. 20 (untuk 20%)"
+                        : editForm.discount_type === "bundling"
+                        ? "e.g. 150000 (Harga total bundle)"
+                        : "e.g. 25000 (Potongan nominal)"
+                    }
+                    className="w-full bg-surface-container-high border border-white/15 rounded-xl px-3.5 py-2.5 text-sm text-white focus:border-secondary outline-none transition-all font-mono"
+                  />
+                </div>
               </div>
 
               {/* Tanggal Mulai & Tanggal Berakhir (datetime picker in WIB) */}
@@ -1754,121 +2207,113 @@ export default function PromoManager({ onToast }: PromoManagerProps) {
                 </div>
               </div>
 
-              {/* Maksimal Kuota Section with Unlimited Toggle */}
-              <div className="p-3.5 rounded-xl bg-black/40 border border-white/10 space-y-3">
+              {/* Syarat & Ketentuan Khusus Pendaftar (Opsional) */}
+              <div className="p-4 rounded-xl bg-black/40 border border-white/10 space-y-3">
                 <div className="flex items-center justify-between">
                   <div>
-                    <label className="font-semibold text-white uppercase tracking-wider text-[11px] block">
-                      Maksimal Kuota (max_quota)
+                    <label className="font-semibold text-white uppercase tracking-wider text-[11px] flex items-center gap-1.5">
+                      <Sparkles className="w-3.5 h-3.5 text-[#ffd700]" />
+                      Syarat &amp; Ketentuan Khusus Pendaftar (Opsional)
                     </label>
-                    <p className="text-[11px] text-on-surface-variant font-sans">
-                      Atur kuota kuantitas atau buat tanpa batas kuota.
+                    <p className="text-[11px] text-on-surface-variant font-sans mt-0.5">
+                      Poin klausul persyaratan yang wajib disetujui pendaftar saat memilih paket promo ini di formulir pendaftaran.
                     </p>
                   </div>
-
-                  {/* Unlimited Toggle */}
-                  <label className="flex items-center gap-2 cursor-pointer bg-surface-container-high px-3 py-1.5 rounded-lg border border-white/10 hover:border-secondary/40 transition-all">
-                    <input
-                      type="checkbox"
-                      checked={editForm.is_unlimited}
-                      onChange={(e) => setEditForm({ ...editForm, is_unlimited: e.target.checked })}
-                      className="rounded border-white/20 bg-surface-container-highest text-secondary focus:ring-secondary w-4 h-4 cursor-pointer"
-                    />
-                    <span className="text-xs font-semibold text-white select-none">
-                      Unlimited Kuota
-                    </span>
-                  </label>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEditForm((prev) => ({
+                        ...prev,
+                        special_terms: [...(prev.special_terms || []), ""],
+                      }));
+                    }}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-secondary/15 hover:bg-secondary/25 text-secondary border border-secondary/30 text-xs font-semibold transition-all cursor-pointer shadow-sm hover:scale-[1.02]"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Tambah Syarat Khusus</span>
+                  </button>
                 </div>
 
-                {editForm.is_unlimited ? (
-                  <div className="p-3 rounded-lg bg-cyan-500/10 border border-cyan-500/20 text-cyan-300 text-xs flex items-center gap-2">
-                    <Sparkles className="w-4 h-4 shrink-0 text-cyan-400" />
-                    <span>
-                      <strong>Tanpa Batas Kuota:</strong> Nilai <code className="font-mono">max_quota</code> diset <code className="font-mono">NULL</code>. Promo ini akan selalu tersedia untuk pembeli selama periode aktif.
-                    </span>
+                {(editForm.special_terms || []).length === 0 ? (
+                  <div className="p-3.5 rounded-xl bg-white/5 border border-dashed border-white/10 text-center text-xs text-slate-400 font-sans">
+                    Belum ada syarat khusus ditambahkan. Paket promo ini dapat langsung dipilih pendaftar tanpa checklist klausul syarat tambahan.
                   </div>
                 ) : (
-                  <div>
-                    <input
-                      type="number"
-                      required
-                      min="1"
-                      value={editForm.kuota_maksimal}
-                      onChange={(e) => setEditForm({ ...editForm, kuota_maksimal: e.target.value })}
-                      placeholder="Masukkan batas kuota, e.g. 100, 250"
-                      className="w-full bg-surface-container-high border border-white/15 rounded-xl px-3.5 py-2.5 text-sm text-white focus:border-secondary outline-none transition-all font-mono"
-                    />
+                  <div className="space-y-2">
+                    {editForm.special_terms.map((term, idx) => (
+                      <div key={idx} className="flex items-center gap-2 animate-in fade-in duration-200">
+                        <span className="w-6 h-6 rounded-full bg-secondary/20 text-secondary border border-secondary/30 flex items-center justify-center text-xs font-bold font-mono shrink-0">
+                          {idx + 1}
+                        </span>
+                        <input
+                          type="text"
+                          value={term}
+                          onChange={(e) => {
+                            const updated = [...editForm.special_terms];
+                            updated[idx] = e.target.value;
+                            setEditForm({ ...editForm, special_terms: updated });
+                          }}
+                          placeholder="Contoh: Wajib upload bukti share ke 3 grup WhatsApp / Follow IG @voitsfest"
+                          className="flex-1 bg-surface-container-high border border-white/15 rounded-xl px-3.5 py-2 text-xs text-white focus:border-secondary outline-none transition-all font-sans"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const updated = editForm.special_terms.filter((_, i) => i !== idx);
+                            setEditForm({ ...editForm, special_terms: updated });
+                          }}
+                          title="Hapus syarat ini"
+                          className="p-2 rounded-lg text-slate-400 hover:text-error hover:bg-white/5 transition-colors cursor-pointer shrink-0"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    ))}
                   </div>
                 )}
-              </div>
 
-              {/* Target Event, Kategori Peserta, Kapasitas & Diskon */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-on-surface-variant font-semibold mb-1 uppercase tracking-wider">
-                    Target Event
-                  </label>
-                  <select
-                    value={editForm.target_event}
-                    onChange={(e) => setEditForm({ ...editForm, target_event: e.target.value as PromoTargetEvent })}
-                    className="w-full bg-surface-container-high border border-white/15 rounded-xl px-3 py-2.5 text-xs text-white focus:border-secondary outline-none cursor-pointer"
-                  >
-                    {PROMO_TARGET_EVENTS.map((evt) => (
-                      <option key={evt} value={evt} className="bg-[#0b1026]">
-                        {evt}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+                {/* Wajibkan Upload Bukti Persyaratan (Foto / PDF) */}
+                <div className="pt-3 border-t border-white/10 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="space-y-0.5">
+                      <label className="text-xs font-semibold text-white flex items-center gap-2 cursor-pointer">
+                        <Upload className="w-3.5 h-3.5 text-secondary" />
+                        Wajibkan Upload Bukti Persyaratan (Foto / PDF)
+                      </label>
+                      <p className="text-[11px] text-on-surface-variant font-sans">
+                        Pendaftar wajib melampirkan berkas bukti (screenshot / PDF) sebelum dapat lanjut ke pembayaran.
+                      </p>
+                    </div>
+                    <label className="relative inline-flex items-center cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={editForm.requires_proof_file}
+                        onChange={(e) => setEditForm({ ...editForm, requires_proof_file: e.target.checked })}
+                        className="sr-only peer"
+                      />
+                      <div className="w-9 h-5 bg-surface-variant peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-secondary"></div>
+                    </label>
+                  </div>
 
-                <div>
-                  <label className="block text-on-surface-variant font-semibold mb-1 uppercase tracking-wider">
-                    Kapasitas (Orang)
-                  </label>
-                  <select
-                    value={editForm.kapasitas}
-                    onChange={(e) => setEditForm({ ...editForm, kapasitas: e.target.value })}
-                    className="w-full bg-surface-container-high border border-white/15 rounded-xl px-3 py-2.5 text-xs text-white focus:border-secondary outline-none cursor-pointer font-mono"
-                  >
-                    {[1, 2, 3, 4, 5].map((num) => (
-                      <option key={num} value={num} className="bg-[#0b1026]">
-                        {num} Orang
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-on-surface-variant font-semibold mb-1 uppercase tracking-wider">
-                    Tipe Diskon
-                  </label>
-                  <select
-                    value={editForm.discount_type}
-                    onChange={(e) => setEditForm({ ...editForm, discount_type: e.target.value as DiscountType })}
-                    className="w-full bg-surface-container-high border border-white/15 rounded-xl px-3 py-2.5 text-xs text-white focus:border-secondary outline-none cursor-pointer"
-                  >
-                    <option value="percent" className="bg-[#0b1026]">Persentase (%)</option>
-                    <option value="nominal" className="bg-[#0b1026]">Nominal Potongan (Rp)</option>
-                    <option value="bundling" className="bg-[#0b1026]">Harga Paket Bundling (Rp)</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-on-surface-variant font-semibold mb-1 uppercase tracking-wider">
-                    Nilai Diskon / Harga *
-                  </label>
-                  <input
-                    type="number"
-                    required
-                    min="0"
-                    step="any"
-                    value={editForm.discount_value}
-                    onChange={(e) => setEditForm({ ...editForm, discount_value: e.target.value })}
-                    className="w-full bg-surface-container-high border border-white/15 rounded-xl px-3.5 py-2.5 text-sm text-white focus:border-secondary outline-none transition-all font-mono"
-                  />
+                  {editForm.requires_proof_file && (
+                    <div className="p-3 rounded-xl bg-white/5 border border-white/10 space-y-1.5 animate-in fade-in duration-200">
+                      <label className="text-[11px] font-medium text-slate-300 flex items-center gap-1.5">
+                        <FileCheck className="w-3.5 h-3.5 text-secondary" />
+                        Instruksi Format Bukti (Opsional)
+                      </label>
+                      <input
+                        type="text"
+                        value={editForm.proof_instruction}
+                        onChange={(e) => setEditForm({ ...editForm, proof_instruction: e.target.value })}
+                        placeholder="Contoh: Gabungkan screenshot follow IG & share 3 grup WA ke dalam 1 file PDF atau foto kolase"
+                        className="w-full bg-surface-container-high border border-white/15 rounded-xl px-3.5 py-2 text-xs text-white focus:border-secondary outline-none transition-all font-sans"
+                      />
+                    </div>
+                  )}
                 </div>
               </div>
 
+              {/* Status Aktif */}
               <div className="flex items-center gap-3 pt-2">
                 <input
                   type="checkbox"
@@ -1877,8 +2322,8 @@ export default function PromoManager({ onToast }: PromoManagerProps) {
                   onChange={(e) => setEditForm({ ...editForm, is_active: e.target.checked })}
                   className="rounded border-white/20 bg-surface-container-high text-secondary focus:ring-secondary w-4 h-4 cursor-pointer"
                 />
-                <label htmlFor="edit_promo_is_active" className="text-xs text-white cursor-pointer font-medium">
-                  Aktifkan promo ini di User Dashboard &amp; Checkout
+                <label htmlFor="edit_promo_is_active" className="text-xs text-white cursor-pointer font-medium select-none">
+                  Aktifkan promo ini di Formulir Pendaftaran &amp; User Dashboard
                 </label>
               </div>
 
@@ -1945,16 +2390,19 @@ export default function PromoManager({ onToast }: PromoManagerProps) {
                 />
               </div>
 
-              {/* 2. Total Biaya (Price) */}
+              {/* 2. Total Biaya Pendaftaran (Harga Dasar / Coret) */}
               <div>
                 <div className="flex justify-between items-center mb-1">
                   <label className="text-on-surface-variant font-semibold uppercase tracking-wider">
-                    Total Biaya Pendaftaran (Rp) *
+                    Total Biaya Pendaftaran (Harga Dasar / Coret) (Rp) *
                   </label>
                   <span className="text-xs font-mono font-bold text-[#ffd700]">
                     {formatRupiah(subEventForm.price)}
                   </span>
                 </div>
+                <p className="text-[11px] text-on-surface-variant mb-1.5 font-sans">
+                  Harga dasar normal (non-diskon). Digunakan secara eksklusif untuk harga pembanding/coret (anchor pricing) di formulir pendaftaran untuk menonjolkan diskon paket promo.
+                </p>
                 <input
                   type="number"
                   min="0"
@@ -2011,12 +2459,17 @@ export default function PromoManager({ onToast }: PromoManagerProps) {
                 </div>
               </div>
 
-              {/* 4. Kuota Fase Pendaftaran (phase_quota) */}
+              {/* 4. Kuota Fase Pendaftaran (phase_quota) - Milestone Indikator */}
               <div className="p-3.5 rounded-xl bg-surface-container-high/40 border border-white/10 space-y-2.5">
                 <div className="flex items-center justify-between">
-                  <label className="text-on-surface-variant font-semibold uppercase tracking-wider block">
-                    Total Kuota (Fase Pendaftaran)
-                  </label>
+                  <div>
+                    <label className="text-on-surface-variant font-semibold uppercase tracking-wider block">
+                      Total Kuota (Fase Pendaftaran)
+                    </label>
+                    <span className="text-[10px] text-secondary font-medium block">
+                      Ambang Batas Kumulatif Fase (Milestone Indikator)
+                    </span>
+                  </div>
                   <label className="inline-flex items-center gap-2 cursor-pointer select-none">
                     <input
                       type="checkbox"
@@ -2027,12 +2480,12 @@ export default function PromoManager({ onToast }: PromoManagerProps) {
                     <span className="text-xs text-secondary font-medium">Unlimited Kuota Fase</span>
                   </label>
                 </div>
-                <p className="text-[11px] text-on-surface-variant">
-                  Alokasi batas maksimal tiket khusus untuk fase pendaftaran aktif ini. Dihitung strictly dari tiket reguler (tanpa bundling/promo). Terpakai saat ini di fase:{" "}
+                <p className="text-[11px] text-on-surface-variant font-sans">
+                  Merepresentasikan ambang batas kuota kumulatif hingga fase pendaftaran aktif (contoh: plafon gabungan Pre-Sale 1 + Pre-Sale 2). Digunakan sebagai konteks progres informasional peserta (milestone indicator) dan bukan pembatas pilihan radio. Terdaftar kumulatif saat ini:{" "}
                   <span className="text-white font-bold font-mono">
                     {subEventQuotas?.[editingEventKey]?.usedInPhase ?? 0}
                   </span>{" "}
-                  peserta reguler.
+                  peserta.
                 </p>
 
                 <input
@@ -2041,17 +2494,22 @@ export default function PromoManager({ onToast }: PromoManagerProps) {
                   disabled={subEventForm.is_phase_unlimited}
                   value={subEventForm.is_phase_unlimited ? "" : subEventForm.phase_quota}
                   onChange={(e) => setSubEventForm({ ...subEventForm, phase_quota: e.target.value })}
-                  placeholder={subEventForm.is_phase_unlimited ? "Tanpa batas (Unlimited - NULL di DB)" : "Masukkan kuota fase..."}
+                  placeholder={subEventForm.is_phase_unlimited ? "Tanpa batas (Unlimited - NULL di DB)" : "Masukkan kuota kumulatif fase..."}
                   className="w-full bg-surface-container-high border border-white/15 rounded-xl px-3.5 py-2.5 text-sm text-white focus:border-secondary outline-none transition-all font-mono disabled:opacity-40 disabled:cursor-not-allowed"
                 />
               </div>
 
-              {/* 5. Total Kuota (Slot Peserta Sub-Event / event_quota) */}
+              {/* 5. Total Kuota (Slot Peserta Sub-Event / event_quota) - Master Panitia */}
               <div className="p-3.5 rounded-xl bg-surface-container-high/40 border border-white/10 space-y-2.5">
                 <div className="flex items-center justify-between">
-                  <label className="text-on-surface-variant font-semibold uppercase tracking-wider block">
-                    Total Kuota (Slot Peserta)
-                  </label>
+                  <div>
+                    <label className="text-on-surface-variant font-semibold uppercase tracking-wider block">
+                      Total Kuota (Total Slot Peserta)
+                    </label>
+                    <span className="text-[10px] text-emerald-400 font-medium block">
+                      Kapasitas Master Panitia (Internal / Admin-Only)
+                    </span>
+                  </div>
                   <label className="inline-flex items-center gap-2 cursor-pointer select-none">
                     <input
                       type="checkbox"
@@ -2062,8 +2520,8 @@ export default function PromoManager({ onToast }: PromoManagerProps) {
                     <span className="text-xs text-secondary font-medium">Unlimited</span>
                   </label>
                 </div>
-                <p className="text-[11px] text-on-surface-variant">
-                  Batas kapasitas fisik maksimal peserta sub-event di seluruh fase gabungan (event_quota), mencakup seluruh pendaftar reguler dan paket bundling. Total terdaftar saat ini:{" "}
+                <p className="text-[11px] text-on-surface-variant font-sans">
+                  Target kapasitas master keseluruhan dari panitia. Dijaga strictly untuk referensi internal/admin (tidak pernah diekspos ke peserta umum di formulir pendaftaran). Total terdaftar riil saat ini:{" "}
                   <span className="text-white font-bold font-mono">
                     {subEventQuotas?.[editingEventKey]?.totalEventRegistered ?? 0}
                   </span>{" "}
@@ -2076,7 +2534,7 @@ export default function PromoManager({ onToast }: PromoManagerProps) {
                   disabled={subEventForm.is_event_unlimited}
                   value={subEventForm.is_event_unlimited ? "" : subEventForm.event_quota}
                   onChange={(e) => setSubEventForm({ ...subEventForm, event_quota: e.target.value })}
-                  placeholder={subEventForm.is_event_unlimited ? "Tanpa batas (Unlimited - NULL di DB)" : "Masukkan kapasitas total..."}
+                  placeholder={subEventForm.is_event_unlimited ? "Tanpa batas (Unlimited - NULL di DB)" : "Masukkan target master kapasitas..."}
                   className="w-full bg-surface-container-high border border-white/15 rounded-xl px-3.5 py-2.5 text-sm text-white focus:border-secondary outline-none transition-all font-mono disabled:opacity-40 disabled:cursor-not-allowed"
                 />
               </div>

@@ -157,6 +157,13 @@ CREATE TABLE promos (
     description     TEXT NOT NULL,
     discount_type   discount_type NOT NULL,
     discount_value  NUMERIC(12, 2) NOT NULL DEFAULT 0,
+    target_event    TEXT,
+    kuota_maksimal  INTEGER,
+    kuota_terpakai  INTEGER NOT NULL DEFAULT 0,
+    kapasitas       INTEGER NOT NULL DEFAULT 1,
+    kategori_peserta TEXT DEFAULT 'Semua',
+    special_terms   TEXT[] DEFAULT '{}'::TEXT[],
+    terms_and_conditions TEXT[] DEFAULT '{}'::TEXT[],
     is_active       BOOLEAN NOT NULL DEFAULT TRUE,
     start_date      TIMESTAMPTZ NOT NULL,
     end_date        TIMESTAMPTZ NOT NULL,
@@ -649,3 +656,34 @@ INSERT INTO cms_settings (key, value) VALUES
 --   - payment-proofs: authenticated users can upload; admins can read all
 --   - proposals: anon/authenticated can upload; admins can read all
 --   - sponsor-logos: admins can upload/read; public can read active ones
+
+-- ============================================================
+-- 11. DYNAMIC SPECIAL REQUIREMENTS & PROOFS
+-- ============================================================
+-- Alter promos table for special terms and proof upload requirements
+ALTER TABLE public.promos ADD COLUMN IF NOT EXISTS special_terms TEXT[] DEFAULT '{}'::TEXT[];
+ALTER TABLE public.promos ADD COLUMN IF NOT EXISTS terms_and_conditions TEXT[] DEFAULT '{}'::TEXT[];
+ALTER TABLE public.promos ADD COLUMN IF NOT EXISTS requires_proof_file BOOLEAN DEFAULT false;
+ALTER TABLE public.promos ADD COLUMN IF NOT EXISTS proof_instructions TEXT;
+
+-- Alter registration tables for promo proof storage URL
+ALTER TABLE public.colorfun_registrations ADD COLUMN IF NOT EXISTS promo_proof_url TEXT;
+ALTER TABLE public.festival_registrations ADD COLUMN IF NOT EXISTS promo_proof_url TEXT;
+ALTER TABLE public.transactions ADD COLUMN IF NOT EXISTS promo_proof_url TEXT;
+
+-- Dedicated Supabase Storage bucket for promo proof files
+INSERT INTO storage.buckets (id, name, public)
+VALUES ('promo_proofs', 'promo_proofs', true)
+ON CONFLICT (id) DO NOTHING;
+
+CREATE POLICY "Public Select Promo Proofs" 
+ON storage.objects FOR SELECT 
+TO public 
+USING (bucket_id = 'promo_proofs');
+
+CREATE POLICY "Public Insert Promo Proofs" 
+ON storage.objects FOR INSERT 
+TO public 
+WITH CHECK (bucket_id = 'promo_proofs');
+
+

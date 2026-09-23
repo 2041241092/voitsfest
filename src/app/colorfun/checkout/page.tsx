@@ -13,6 +13,7 @@ import {
   UploadCloud, 
   CheckCircle, 
   ArrowRight, 
+  ArrowLeft, 
   Copy, 
   Check, 
   Info, 
@@ -31,12 +32,14 @@ import {
   X,
   Clock,
   Ban,
-  Infinity
+  Infinity,
+  Megaphone,
+  Upload
 } from "lucide-react";
 import { fetchPricingTiers, EventPricing, DEFAULT_PRICING_TIERS } from "@/lib/pricing";
 import { itsDepartments } from "@/lib/departments";
 import { Promo } from "@/types/database";
-import { validatePromoForEvent, incrementPromoQuota, calculatePromoPrice } from "@/lib/promo";
+import { validatePromoForEvent, incrementPromoQuota, calculatePromoPrice, extractSpecialTerms } from "@/lib/promo";
 import { checkQuotaAvailability, fetchAllSubEventQuotas, dispatchQuotaRefresh, listenToQuotaRefresh, QuotaStatus } from "@/lib/quota";
 import { formatDisplayWIB, getEventTimeStatus, parseWibDate } from "@/lib/timeUtils";
 import { formatBIB } from "@/lib/bib";
@@ -127,7 +130,28 @@ export default function ColorFunCheckoutPage() {
   const [isValidatingPromo, setIsValidatingPromo] = useState(false);
   const [activePromos, setActivePromos] = useState<Promo[]>([]);
   const [loadingPromos, setLoadingPromos] = useState(true);
-  const [selectedPricingId, setSelectedPricingId] = useState<string>("standard");
+  const [selectedPricingId, setSelectedPricingId] = useState<string>("");
+  const hasBouncedRef = useRef(false);
+
+  // Step Wizard State (Step 1: Data & Tiket vs Step 2: Pembayaran)
+  const [step, setStep] = useState<1 | 2>(1);
+  const [isValidatingStep1Quota, setIsValidatingStep1Quota] = useState(false);
+  const [persetujuanSyaratKhusus, setPersetujuanSyaratKhusus] = useState(false);
+  const [promoProofFile, setPromoProofFile] = useState<File | null>(null);
+  const [promoProofPreview, setPromoProofPreview] = useState<string | null>(null);
+  const [promoProofError, setPromoProofError] = useState<string | null>(null);
+  const promoProofInputRef = useRef<HTMLInputElement>(null);
+  const [toast, setToast] = useState<{ type: "success" | "error"; message: string } | null>(null);
+  const toastTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const [quotaAlertModal, setQuotaAlertModal] = useState<string | null>(null);
+
+  const showToast = useCallback((type: "success" | "error", message: string) => {
+    setToast({ type, message });
+    if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
+    toastTimeoutRef.current = setTimeout(() => {
+      setToast(null);
+    }, 5000);
+  }, []);
 
   // Status & Feedback
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -161,6 +185,29 @@ export default function ColorFunCheckoutPage() {
       console.warn("Error loading colorfun pricing and quota:", err);
     }
   }, []);
+
+  // Step 2 Quota Exhausted Bounce-Back Handler:
+  // Re-routes participant to Step 1 and resets ticket/promo selection while preserving personal identity inputs
+  const handleQuotaExhaustedBounce = useCallback((customMsg?: string) => {
+    hasBouncedRef.current = true;
+    const msg = customMsg || "Maaf, kuota untuk paket yang Anda pilih baru saja habis karena telah diamankan peserta lain. Silakan pilih paket lain yang masih tersedia.";
+    setIsSubmitting(false);
+    setSelectedPricingId("");
+    setAppliedPromo(null);
+    setPromoCode("");
+    setPromoError(null);
+    setPaymentProofFile(null);
+    setPaymentProofPreview(null);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
+    setStep(1);
+    setError(msg);
+    showToast("error", msg);
+    setQuotaAlertModal(msg);
+    loadPricingAndQuota();
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }, [loadPricingAndQuota, showToast]);
 
   useEffect(() => {
     loadPricingAndQuota();
@@ -265,6 +312,42 @@ export default function ColorFunCheckoutPage() {
     return calculatePromoPrice(appliedPromo, CFR_TICKET_PRICE, kapasitas);
   }, [appliedPromo, CFR_TICKET_PRICE, kapasitas]);
 
+  // Extract special terms and conditions if present on selected promo
+  const currentSpecialTerms = useMemo(() => {
+    return extractSpecialTerms(appliedPromo);
+  }, [appliedPromo]);
+
+  // Auto-reset special terms agreement and proof file whenever promo selection changes or unmounts
+  useEffect(() => {
+    setPersetujuanSyaratKhusus(false);
+    setPromoProofFile(null);
+    setPromoProofPreview((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return null;
+    });
+    setPromoProofError(null);
+  }, [appliedPromo?.id]);
+
+  const handlePromoProofSelect = (file: File) => {
+    setPromoProofError(null);
+    const validTypes = ["image/jpeg", "image/png", "image/jpg", "application/pdf"];
+    if (!validTypes.includes(file.type)) {
+      setPromoProofError("Format file tidak didukung. Harap unggah berkas bertipe JPG, JPEG, PNG, atau PDF.");
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      setPromoProofError("Ukuran file melebihi batas maksimum 5MB.");
+      return;
+    }
+    setPromoProofFile(file);
+    if (file.type.startsWith("image/")) {
+      const url = URL.createObjectURL(file);
+      setPromoProofPreview(url);
+    } else {
+      setPromoProofPreview(null);
+    }
+  };
+
   // Check if primary participant's category is locked by the active promo
   const isKategoriLocked = Boolean(
     appliedPromo?.kategori_peserta && appliedPromo.kategori_peserta !== "Semua"
@@ -288,6 +371,9 @@ export default function ColorFunCheckoutPage() {
     }
   }, [promoRequiredCategory]);
 
+  // Cache extra members so companion data is never lost if capacity fluctuates or resets
+  const cachedExtraMembersRef = useRef<ExtraMemberState[]>([]);
+
   // Synchronize extraMembers array length dynamically when kapasitas changes
   useEffect(() => {
     const targetCount = Math.max(0, kapasitas - 1);
@@ -296,18 +382,24 @@ export default function ColorFunCheckoutPage() {
       if (prev.length < targetCount) {
         const added: ExtraMemberState[] = Array.from(
           { length: targetCount - prev.length },
-          () => ({
-            nama_lengkap: "",
-            whatsapp: "",
-            email: "",
-            kategori_peserta: "Umum",
-            departemen: "",
-            nrp: "",
-            ktm_file: null,
-          })
+          (_, i) => {
+            const cachedIdx = prev.length + i;
+            return (
+              cachedExtraMembersRef.current[cachedIdx] || {
+                nama_lengkap: "",
+                whatsapp: "",
+                email: "",
+                kategori_peserta: "Umum",
+                departemen: "",
+                nrp: "",
+                ktm_file: null,
+              }
+            );
+          }
         );
         return [...prev, ...added];
       }
+      cachedExtraMembersRef.current = prev;
       return prev.slice(0, targetCount);
     });
   }, [kapasitas]);
@@ -322,6 +414,7 @@ export default function ColorFunCheckoutPage() {
         updated[index].nrp = "";
         updated[index].ktm_file = null;
       }
+      cachedExtraMembersRef.current = updated;
       return updated;
     });
   };
@@ -423,12 +516,13 @@ export default function ColorFunCheckoutPage() {
         const profileData = profile as any;
         const meta = authUser?.user_metadata as any;
 
-        // Fallback Resolution:
+        // Fallback Resolution (initial prefilled values from account/profile):
         const fullName =
           profileData?.full_name ||
           meta?.full_name ||
+          authUser?.user_metadata?.name ||
           authUser?.email?.split("@")[0] ||
-          "Nama belum diatur";
+          "";
 
         const resolvedPhone = 
           profileData?.phone || 
@@ -441,14 +535,14 @@ export default function ColorFunCheckoutPage() {
           meta?.whatsapp || 
           meta?.whatsapp_number || 
           authUser?.phone || 
-          'Nomor belum diatur';
+          "";
 
         const email =
           profileData?.email ||
           authUser?.email ||
-          "Email tidak ditemukan";
+          "";
 
-        // Update dedicated state
+        // Update dedicated state (user is completely free to edit/overwrite)
         setUserData({
           fullName,
           phone: resolvedPhone,
@@ -585,16 +679,9 @@ export default function ColorFunCheckoutPage() {
     }
   };
 
-  // 1. Regular Phase Option Availability
-  const isRegularPhaseFull = Boolean(subQuota?.isPhaseFull);
-  const isEventCapacityFull = Boolean(subQuota?.isEventFull);
-  const isRegularSoldOut = isRegularPhaseFull || isEventCapacityFull || Boolean(subQuota && !subQuota.isAvailable);
-
-  // 2. Selected Option Availability
+  // 1. Selected Option Availability (evaluated strictly from activePromos)
   const isCurrentOptionSoldOut = useMemo(() => {
-    if (selectedPricingId === "standard") {
-      return isRegularSoldOut;
-    }
+    if (!selectedPricingId) return false;
     const currentPromo = activePromos.find((p) => p.id === selectedPricingId);
     if (!currentPromo || !currentPromo.is_active) return true;
     const { isActive: isPromoDateActive } = getEventTimeStatus(currentPromo.start_date, currentPromo.end_date);
@@ -602,11 +689,11 @@ export default function ColorFunCheckoutPage() {
     const isPromoUnlimited = currentPromo.kuota_maksimal == null;
     const promoUsed = currentPromo.kuota_terpakai ?? 0;
     return !isPromoUnlimited && currentPromo.kuota_maksimal != null && promoUsed >= currentPromo.kuota_maksimal;
-  }, [selectedPricingId, isRegularSoldOut, activePromos]);
+  }, [selectedPricingId, activePromos]);
 
-  // 3. Are all selectable options sold out?
+  // 2. Are all selectable promo options sold out?
   const areAllOptionsSoldOut = useMemo(() => {
-    if (!isRegularSoldOut) return false;
+    if (loadingPromos) return false;
     if (activePromos.length === 0) return true;
     return activePromos.every((p) => {
       const { isActive: isPromoDateActive } = getEventTimeStatus(p.start_date, p.end_date);
@@ -614,43 +701,24 @@ export default function ColorFunCheckoutPage() {
       if (p.kuota_maksimal == null) return false;
       return (p.kuota_terpakai ?? 0) >= p.kuota_maksimal;
     });
-  }, [isRegularSoldOut, activePromos]);
-
-  // Select Standard Base Price
-  const handleSelectStandardPrice = () => {
-    if (isRegularSoldOut) {
-      setError("Maaf, kuota untuk kategori tiket/promo yang Anda pilih baru saja habis.");
-      return;
-    }
-    setSelectedPricingId("standard");
-    setAppliedPromo(null);
-    setPromoCode("");
-    setPromoError(null);
-  };
+  }, [loadingPromos, activePromos]);
 
   // Select a Promo Bundle Card
   const handleSelectPromoOption = useCallback((promo: Promo) => {
-    if (selectedPricingId === promo.id) {
-      // Toggle off if already selected -> return to standard if available
-      if (!isRegularSoldOut) {
-        handleSelectStandardPrice();
-      }
-      return;
-    }
-
+    hasBouncedRef.current = false;
     const isPromoUnlimited = promo.kuota_maksimal == null;
     const promoUsed = promo.kuota_terpakai ?? 0;
     const isPromoSoldOut = !isPromoUnlimited && promo.kuota_maksimal != null && promoUsed >= promo.kuota_maksimal;
     const { isActive: isPromoDateActive } = getEventTimeStatus(promo.start_date, promo.end_date);
 
     if (!promo.is_active || !isPromoDateActive || isPromoSoldOut) {
-      setPromoError("Maaf, kuota untuk kategori tiket/promo yang Anda pilih baru saja habis.");
+      setPromoError("Maaf, kuota untuk paket promo yang Anda pilih baru saja habis.");
       return;
     }
 
     const result = validatePromoForEvent(promo, "ColorFun Run", CFR_TICKET_PRICE);
     if (!result.valid) {
-      setPromoError(result.error || "Maaf, kuota untuk kategori tiket/promo yang Anda pilih baru saja habis.");
+      setPromoError(result.error || "Maaf, kuota untuk paket promo yang Anda pilih baru saja habis.");
       return;
     }
 
@@ -658,21 +726,24 @@ export default function ColorFunCheckoutPage() {
     setAppliedPromo(result.promo || promo);
     setPromoCode(promo.title);
     setPromoError(null);
-  }, [selectedPricingId, isRegularSoldOut, CFR_TICKET_PRICE]);
+  }, [CFR_TICKET_PRICE]);
 
-  // Auto-select first available promo if regular tier is exhausted
+  // Auto-select first available promo once activePromos are loaded (if not bounced)
   useEffect(() => {
-    if (selectedPricingId === "standard" && isRegularSoldOut && activePromos.length > 0) {
+    if (activePromos.length === 0 || hasBouncedRef.current) return;
+    const isCurrentValid = activePromos.some((p) => p.id === selectedPricingId);
+    if (!isCurrentValid) {
       const availablePromo = activePromos.find((p) => {
         const { isActive } = getEventTimeStatus(p.start_date, p.end_date);
         const isSoldOut = p.kuota_maksimal != null && (p.kuota_terpakai ?? 0) >= p.kuota_maksimal;
         return p.is_active && isActive && !isSoldOut;
-      });
+      }) || activePromos[0];
+
       if (availablePromo) {
         handleSelectPromoOption(availablePromo);
       }
     }
-  }, [selectedPricingId, isRegularSoldOut, activePromos, handleSelectPromoOption]);
+  }, [activePromos, selectedPricingId, handleSelectPromoOption]);
 
   // Apply Promo Handler (manual code input)
   const handleApplyPromo = async () => {
@@ -690,7 +761,7 @@ export default function ColorFunCheckoutPage() {
       if (fetchErr || !data) {
         setPromoError("Kode promo tidak ditemukan.");
         setAppliedPromo(null);
-        setSelectedPricingId("standard");
+        setSelectedPricingId("");
         return;
       }
 
@@ -700,7 +771,7 @@ export default function ColorFunCheckoutPage() {
       if (!p.is_active || !isActive || isQuotaFull) {
         setPromoError("Kode promo sudah melewati periode aktif atau kuota telah habis");
         setAppliedPromo(null);
-        setSelectedPricingId("standard");
+        setSelectedPricingId("");
         return;
       }
 
@@ -708,12 +779,13 @@ export default function ColorFunCheckoutPage() {
       if (!result.valid) {
         setPromoError(result.error || "Kode promo sudah melewati periode aktif atau kuota telah habis");
         setAppliedPromo(null);
-        setSelectedPricingId("standard");
+        setSelectedPricingId("");
         return;
       }
 
+      hasBouncedRef.current = false;
       setAppliedPromo(result.promo || null);
-      setSelectedPricingId(result.promo?.id || "custom");
+      setSelectedPricingId(result.promo?.id || p.id);
       setPromoError(null);
     } catch (err: any) {
       setPromoError("Gagal memvalidasi kode promo: " + (err.message || ""));
@@ -726,7 +798,7 @@ export default function ColorFunCheckoutPage() {
     setAppliedPromo(null);
     setPromoCode("");
     setPromoError(null);
-    setSelectedPricingId("standard");
+    setSelectedPricingId("");
   };
 
   // Copy BNI Account Number
@@ -750,35 +822,28 @@ export default function ColorFunCheckoutPage() {
     setTimeout(() => setCopiedAmount(false), 2000);
   };
 
-  // Comprehensive Form Validation Check
-  const isFormValid = useMemo(() => {
-    if (loading || !user || isCompressingKtm || isCompressingProof) return false;
+  // Step 1 Validation Check (Participant Data, Emergency Contact, Consent)
+  const isStep1Valid = useMemo(() => {
+    if (loading || !user || isCompressingKtm) return false;
 
-    // 0. Payment method must be selected (bni or qris)
-    if (metodeBayar !== "bni" && metodeBayar !== "qris") return false;
+    // Primary Participant validation
+    if (!userData.fullName.trim()) return false;
+    if (!userData.phone.trim()) return false;
+    if (!userData.email.trim()) return false;
 
-    // 1. Payment proof file selected
-    if (!paymentProofFile) return false;
-
-    // 2. Personal & Emergency details
-    if (!kontakDarurat.trim()) return false;
-    if (!nomorWADarurat.trim()) return false;
-    if (!hubunganDarurat) return false;
-
-    // 3. Sender account name
-    if (!rekeningPengirim.trim()) return false;
-
-    // 4. Terms / Waiver agreement
-    if (!persetujuanSehat) return false;
-
-    // 5. Category-specific validation: Mahasiswa ITS requires Departemen, NRP & KTM
+    // Category-specific validation: Mahasiswa ITS requires Departemen, NRP & KTM
     if (kategoriPeserta === "Mahasiswa ITS") {
       if (!departemen.trim()) return false;
       if (!nrp.trim()) return false;
       if (!ktmFile) return false;
     }
 
-    // 6. Dynamic Extra Members validation
+    // Personal & Emergency details
+    if (!kontakDarurat.trim()) return false;
+    if (!nomorWADarurat.trim()) return false;
+    if (!hubunganDarurat) return false;
+
+    // Dynamic Extra Members validation
     for (const member of extraMembers) {
       if (!member.nama_lengkap.trim()) return false;
       if (!member.whatsapp.trim()) return false;
@@ -791,29 +856,277 @@ export default function ColorFunCheckoutPage() {
       }
     }
 
+    // Terms / Waiver agreement
+    if (!persetujuanSehat) return false;
+
+    // Special Terms agreement (Mandatory if promo defines special_terms or requires proof)
+    if ((currentSpecialTerms.length > 0 || appliedPromo?.requires_proof_file) && !persetujuanSyaratKhusus) return false;
+
+    // Special Requirements Proof File (Mandatory if promo requires proof file)
+    if (appliedPromo?.requires_proof_file && !promoProofFile) return false;
+
+    // Quota status and package selection
+    if (!selectedPricingId || isCurrentOptionSoldOut || areAllOptionsSoldOut) return false;
+
     return true;
   }, [
     loading,
     user,
     isCompressingKtm,
-    isCompressingProof,
-    metodeBayar,
-    paymentProofFile,
-    kontakDarurat,
-    nomorWADarurat,
-    hubunganDarurat,
-    rekeningPengirim,
-    persetujuanSehat,
+    selectedPricingId,
+    userData.fullName,
+    userData.phone,
+    userData.email,
     kategoriPeserta,
     departemen,
     nrp,
     ktmFile,
+    kontakDarurat,
+    nomorWADarurat,
+    hubunganDarurat,
     extraMembers,
+    persetujuanSehat,
+    currentSpecialTerms.length,
+    appliedPromo?.requires_proof_file,
+    promoProofFile,
+    persetujuanSyaratKhusus,
+    isCurrentOptionSoldOut,
+    areAllOptionsSoldOut,
   ]);
+
+  // Step 2 Validation Check (Payment method, Sender account, Proof file)
+  const isStep2Valid = useMemo(() => {
+    if (loading || !user || isCompressingProof) return false;
+    if (metodeBayar !== "bni" && metodeBayar !== "qris") return false;
+    if (!paymentProofFile) return false;
+    if (!rekeningPengirim.trim()) return false;
+    return true;
+  }, [
+    loading,
+    user,
+    isCompressingProof,
+    metodeBayar,
+    paymentProofFile,
+    rekeningPengirim,
+  ]);
+
+  // Overall form validity combines both
+  const isFormValid = isStep1Valid && isStep2Valid;
+
+  // Background Polling Guard: While in Step 2, checks remaining quota of selected package every 8 seconds
+  useEffect(() => {
+    if (step !== 2 || isSubmitting) return;
+
+    let isMounted = true;
+
+    const pollQuota = async () => {
+      if (!isMounted || isSubmitting) return;
+
+      try {
+        const registrantCount = Math.max(appliedPromo?.kapasitas || 1, 1 + extraMembers.length);
+        const [serverGuard, quotaCheck] = await Promise.all([
+          validatePreCheckoutGuard("colorfun", registrantCount, appliedPromo?.id),
+          checkQuotaAvailability("colorfun", registrantCount, appliedPromo?.id),
+        ]);
+
+        if (!isMounted) return;
+
+        if (!serverGuard.valid || !quotaCheck.available) {
+          console.warn("Background polling: Selected package quota exhausted in Step 2. Bouncing to Step 1.");
+          handleQuotaExhaustedBounce();
+        }
+      } catch (err) {
+        console.warn("Notice: Background Step 2 quota poll error:", err);
+      }
+    };
+
+    const timer = setInterval(pollQuota, 8000);
+
+    return () => {
+      isMounted = false;
+      clearInterval(timer);
+    };
+  }, [step, isSubmitting, appliedPromo?.id, appliedPromo?.kapasitas, extraMembers.length, handleQuotaExhaustedBounce]);
+
+  // Realtime state trigger: If isCurrentOptionSoldOut becomes true while in Step 2
+  useEffect(() => {
+    if (step === 2 && !isSubmitting && isCurrentOptionSoldOut) {
+      handleQuotaExhaustedBounce();
+    }
+  }, [step, isSubmitting, isCurrentOptionSoldOut, handleQuotaExhaustedBounce]);
+
+  // Step 1 Gatekeeper: validates all Step 1 inputs & runs fresh real-time Supabase quota verification
+  const handleAdvanceToStep2 = async (e?: React.MouseEvent) => {
+    if (e) e.preventDefault();
+    if (isValidatingStep1Quota) return;
+    setError(null);
+
+    if (!selectedPricingId) {
+      const msg = "Silakan pilih salah satu paket tiket atau promo aktif terlebih dahulu.";
+      setError(msg);
+      showToast("error", msg);
+      return;
+    }
+
+    if (!userData.fullName.trim()) {
+      const msg = "Nama lengkap peserta utama wajib diisi.";
+      setError(msg);
+      showToast("error", msg);
+      return;
+    }
+    if (!userData.phone.trim()) {
+      const msg = "Nomor WhatsApp peserta utama wajib diisi.";
+      setError(msg);
+      showToast("error", msg);
+      return;
+    }
+    if (!userData.email.trim()) {
+      const msg = "Email peserta utama wajib diisi.";
+      setError(msg);
+      showToast("error", msg);
+      return;
+    }
+
+    if (kategoriPeserta === "Mahasiswa ITS") {
+      if (!departemen.trim()) {
+        const msg = "Departemen wajib dipilih untuk Mahasiswa ITS.";
+        setError(msg);
+        showToast("error", msg);
+        return;
+      }
+      if (!nrp.trim()) {
+        const msg = "NRP (Nomor Pokok Mahasiswa) wajib diisi untuk Mahasiswa ITS.";
+        setError(msg);
+        showToast("error", msg);
+        return;
+      }
+      if (!ktmFile) {
+        const msg = "Scan Kartu Pelajar / KTM wajib diunggah untuk Mahasiswa ITS.";
+        setError(msg);
+        showToast("error", msg);
+        return;
+      }
+    }
+
+    // Dynamic Extra members validation
+    for (let i = 0; i < extraMembers.length; i++) {
+      const m = extraMembers[i];
+      const memberNum = i + 1;
+      if (!m.nama_lengkap.trim()) {
+        const msg = `Nama lengkap Anggota ${memberNum} wajib diisi.`;
+        setError(msg);
+        showToast("error", msg);
+        return;
+      }
+      if (!m.whatsapp.trim()) {
+        const msg = `Nomor WhatsApp Anggota ${memberNum} wajib diisi.`;
+        setError(msg);
+        showToast("error", msg);
+        return;
+      }
+      if (!m.email.trim()) {
+        const msg = `Email Anggota ${memberNum} wajib diisi.`;
+        setError(msg);
+        showToast("error", msg);
+        return;
+      }
+      if (m.kategori_peserta === "Mahasiswa ITS") {
+        if (!m.departemen.trim()) {
+          const msg = `Departemen Anggota ${memberNum} wajib dipilih.`;
+          setError(msg);
+          showToast("error", msg);
+          return;
+        }
+        if (!m.nrp.trim()) {
+          const msg = `NRP Anggota ${memberNum} wajib diisi.`;
+          setError(msg);
+          showToast("error", msg);
+          return;
+        }
+        if (!m.ktm_file) {
+          const msg = `Scan Kartu Pelajar / KTM Anggota ${memberNum} wajib diunggah.`;
+          setError(msg);
+          showToast("error", msg);
+          return;
+        }
+      }
+    }
+
+    if (!kontakDarurat.trim()) {
+      const msg = "Nama kontak darurat wajib diisi.";
+      setError(msg);
+      showToast("error", msg);
+      return;
+    }
+    if (!nomorWADarurat.trim()) {
+      const msg = "Nomor WhatsApp kontak darurat wajib diisi.";
+      setError(msg);
+      showToast("error", msg);
+      return;
+    }
+    if (!hubunganDarurat) {
+      const msg = "Silakan pilih hubungan dengan kontak darurat.";
+      setError(msg);
+      showToast("error", msg);
+      return;
+    }
+
+    if (!persetujuanSehat) {
+      const msg = "Anda harus menyetujui pernyataan kondisi fisik dan pelepasan tanggung jawab.";
+      setError(msg);
+      showToast("error", msg);
+      return;
+    }
+
+    if (isCurrentOptionSoldOut || areAllOptionsSoldOut) {
+      const msg = "Maaf, kuota untuk paket yang Anda pilih baru saja habis. Silakan pilih paket lain.";
+      setError(msg);
+      showToast("error", msg);
+      return;
+    }
+
+    // Fresh Real-Time Quota Verification Gatekeeper against Supabase
+    setIsValidatingStep1Quota(true);
+    try {
+      const registrantCount = Math.max(appliedPromo?.kapasitas || 1, 1 + extraMembers.length);
+      const [serverGuard, quotaCheck] = await Promise.all([
+        validatePreCheckoutGuard("colorfun", registrantCount, appliedPromo?.id),
+        checkQuotaAvailability("colorfun", registrantCount, appliedPromo?.id),
+      ]);
+
+      if (!serverGuard.valid || !quotaCheck.available) {
+        const msg = "Maaf, kuota untuk paket yang Anda pilih baru saja habis. Silakan pilih paket lain.";
+        setError(msg);
+        showToast("error", msg);
+        setSelectedPricingId("");
+        setAppliedPromo(null);
+        setPromoCode("");
+        setPromoError(null);
+        loadPricingAndQuota(); // Immediately refresh quotas from DB
+        setIsValidatingStep1Quota(false);
+        return;
+      }
+
+      // Quota confirmed available! Advance to Step 2
+      setStep(2);
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    } catch (err: any) {
+      console.error("Quota validation gatekeeper error:", err);
+      const msg = "Gagal memverifikasi kuota secara real-time. Silakan coba lagi.";
+      setError(msg);
+      showToast("error", msg);
+    } finally {
+      setIsValidatingStep1Quota(false);
+    }
+  };
 
   // Form Submission
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (step === 1) {
+      handleAdvanceToStep2();
+      return;
+    }
     if (isSubmitting) return;
     setIsSubmitting(true);
     setError(null);
@@ -827,6 +1140,24 @@ export default function ColorFunCheckoutPage() {
       setError("Sesi pengguna telah berakhir. Silakan login kembali.");
       setIsSubmitting(false);
       router.replace(`/login?redirect=${encodeURIComponent(currentPath)}`);
+      return;
+    }
+
+    if (!userData.fullName.trim()) {
+      setError("Nama lengkap peserta wajib diisi.");
+      setIsSubmitting(false);
+      return;
+    }
+
+    if (!userData.phone.trim()) {
+      setError("Nomor WhatsApp peserta wajib diisi.");
+      setIsSubmitting(false);
+      return;
+    }
+
+    if (!userData.email.trim()) {
+      setError("Email peserta wajib diisi.");
+      setIsSubmitting(false);
       return;
     }
 
@@ -923,24 +1254,19 @@ export default function ColorFunCheckoutPage() {
     }
 
     if (isCurrentOptionSoldOut || areAllOptionsSoldOut) {
-      setError("Maaf, kuota untuk kategori tiket/promo yang Anda pilih baru saja habis.");
-      setIsSubmitting(false);
+      handleQuotaExhaustedBounce("Maaf, kuota untuk paket yang Anda pilih baru saja habis karena telah diamankan peserta lain. Silakan pilih paket lain yang masih tersedia.");
       return;
     }
 
-    // Lifecycle Rule 1: Verify remaining quota & execute Server-Side Pre-Checkout Guard
+    // Lifecycle Rule 1: Live Pre-Submit Quota Verification in Step 2
     const registrantCount = Math.max(appliedPromo?.kapasitas || 1, 1 + extraMembers.length);
-    const serverGuard = await validatePreCheckoutGuard("colorfun", registrantCount, appliedPromo?.id);
-    if (!serverGuard.valid) {
-      setError(serverGuard.error || "Maaf, kuota untuk kategori tiket/promo yang Anda pilih baru saja habis.");
-      setIsSubmitting(false);
-      return;
-    }
+    const [serverGuard, quotaCheck] = await Promise.all([
+      validatePreCheckoutGuard("colorfun", registrantCount, appliedPromo?.id),
+      checkQuotaAvailability("colorfun", registrantCount, appliedPromo?.id),
+    ]);
 
-    const quotaCheck = await checkQuotaAvailability("colorfun", registrantCount, appliedPromo?.id);
-    if (!quotaCheck.available) {
-      setError("Maaf, kuota untuk kategori tiket/promo yang Anda pilih baru saja habis.");
-      setIsSubmitting(false);
+    if (!serverGuard.valid || !quotaCheck.available) {
+      handleQuotaExhaustedBounce("Maaf, kuota untuk paket yang Anda pilih baru saja habis karena telah diamankan peserta lain. Silakan pilih paket lain yang masih tersedia.");
       return;
     }
 
@@ -1001,6 +1327,71 @@ export default function ColorFunCheckoutPage() {
 
       const paymentProofUrl = proofPublicData?.publicUrl || "";
 
+      // 4.1 Upload Promo Proof File directly to dedicated bucket: promo_proofs
+      let promoProofUrl: string | null = null;
+      if (promoProofFile) {
+        setSubmittingStep("Mengunggah berkas bukti persyaratan promo...");
+        const safePromoProofName = promoProofFile.name.replace(/\s+/g, "_");
+        const promoProofPath = `promo-proofs/${Date.now()}_${safePromoProofName}`;
+
+        let uploadErr: any = null;
+        let usedBucket = "promo_proofs";
+
+        const res1 = await supabase.storage
+          .from("promo_proofs")
+          .upload(promoProofPath, promoProofFile, {
+            cacheControl: "3600",
+            upsert: false,
+          });
+
+        if (res1.error) {
+          uploadErr = res1.error;
+          // Resilient fallback to payment_proofs or registrations if bucket not provisioned
+          const res2 = await supabase.storage
+            .from("payment_proofs")
+            .upload(promoProofPath, promoProofFile, {
+              cacheControl: "3600",
+              upsert: false,
+            });
+          if (!res2.error) {
+            uploadErr = null;
+            usedBucket = "payment_proofs";
+          } else {
+            const res3 = await supabase.storage
+              .from("payment-proofs")
+              .upload(promoProofPath, promoProofFile, {
+                cacheControl: "3600",
+                upsert: false,
+              });
+            if (!res3.error) {
+              uploadErr = null;
+              usedBucket = "payment-proofs";
+            } else {
+              const res4 = await supabase.storage
+                .from("registrations")
+                .upload(promoProofPath, promoProofFile, {
+                  cacheControl: "3600",
+                  upsert: false,
+                });
+              if (!res4.error) {
+                uploadErr = null;
+                usedBucket = "registrations";
+              }
+            }
+          }
+        }
+
+        if (uploadErr) {
+          throw new Error(`Gagal mengunggah berkas bukti persyaratan promo: ${uploadErr.message}`);
+        }
+
+        const { data: promoProofPublicData } = supabase.storage
+          .from(usedBucket)
+          .getPublicUrl(promoProofPath);
+
+        promoProofUrl = promoProofPublicData?.publicUrl || null;
+      }
+
       // 5. Upload extra members' KTMs to 'colorfun_ktm' storage bucket (atomic — abort all on any failure)
       const extraMemberKtmUrls: (string | null)[] = [];
       for (let i = 0; i < extraMembers.length; i++) {
@@ -1046,6 +1437,7 @@ export default function ColorFunCheckoutPage() {
 
       const sharedPaymentContext = {
         bukti_transfer_url: paymentProofUrl,
+        promo_proof_url: promoProofUrl || null,
         rekening_pengirim: rekeningPengirim.trim(),
         payment_status: "Pending",
         amount_paid: finalPrice,
@@ -1055,14 +1447,14 @@ export default function ColorFunCheckoutPage() {
         ticket_qr_code: null,
       };
 
-      // Primary Registrant row
+      // Primary Registrant row (sends manually edited inputs directly)
       const primaryRow: Record<string, any> = {
         user_id: user.id,
         group_id: groupId,
         is_primary: true,
-        nama_lengkap: userData.fullName || user.user_metadata?.full_name || "",
-        email: userData.email || user.email || "",
-        whatsapp: userData.phone || user.user_metadata?.phone || "",
+        nama_lengkap: userData.fullName.trim() || user.user_metadata?.full_name || "",
+        email: userData.email.trim() || user.email || "",
+        whatsapp: userData.phone.trim() || user.user_metadata?.phone || "",
         kategori_peserta: kategoriPeserta,
         departemen: kategoriPeserta === "Mahasiswa ITS" ? departemen.trim() : null,
         nrp: kategoriPeserta === "Mahasiswa ITS" ? nrp.trim() : null,
@@ -1161,6 +1553,23 @@ export default function ColorFunCheckoutPage() {
         }
       }
 
+      // Third fallback: strip promo_proof_url if that column is missing in older migrations
+      if (regError && (regError.message?.includes("promo_proof_url") || regError.code === "PGRST204")) {
+        console.warn("Retrying colorfun_registrations bulk insert without promo_proof_url:", regError.message);
+        const fallbackArray = participantsArray.map((row) => {
+          const { promo_proof_url: _ppu, ...rest } = row;
+          return rest;
+        });
+        const retryRes = await supabase
+          .from("colorfun_registrations")
+          .insert(fallbackArray)
+          .select();
+        if (!retryRes.error) {
+          regError = null;
+          regResults = retryRes.data;
+        }
+      }
+
       if (regError) {
         console.error("Supabase colorfun_registrations bulk insert error:", regError);
         throw new Error(`Gagal menyimpan data pendaftaran: ${regError.message}`);
@@ -1178,6 +1587,7 @@ export default function ColorFunCheckoutPage() {
           sub_event_type: "CFR",
           amount: finalPrice,
           payment_proof_url: paymentProofUrl,
+          promo_proof_url: promoProofUrl || null,
           status: "Pending",
           participant_category: kategoriPeserta,
           student_id_number: kategoriPeserta === "Mahasiswa ITS" ? nrp.trim() : null,
@@ -1339,12 +1749,62 @@ export default function ColorFunCheckoutPage() {
             </div>
           )}
 
+          {/* 2-Step Stepper Progress Bar */}
+          <div className="max-w-xl mx-auto mb-8">
+            <div className="flex items-center justify-between relative">
+              <div className="absolute left-0 top-1/2 -translate-y-1/2 h-0.5 w-full bg-white/10 -z-0" />
+              <div 
+                className="absolute left-0 top-1/2 -translate-y-1/2 h-0.5 bg-gradient-to-r from-secondary to-primary transition-all duration-500 -z-0"
+                style={{ width: step === 1 ? "0%" : "100%" }}
+              />
+
+              {/* Step 1 Indicator */}
+              <div 
+                onClick={() => {
+                  if (step === 2) {
+                    setStep(1);
+                    window.scrollTo({ top: 0, behavior: "smooth" });
+                  }
+                }}
+                className={`relative z-10 flex items-center gap-3 px-4 py-2 rounded-full transition-all ${
+                  step === 1
+                    ? "bg-secondary text-slate-950 font-bold shadow-[0_0_15px_rgba(176,198,255,0.4)]"
+                    : "bg-slate-900 border border-white/20 text-white cursor-pointer hover:border-secondary/50"
+                }`}
+              >
+                <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${
+                  step === 1 ? "bg-slate-950 text-secondary" : "bg-white/10 text-white"
+                }`}>
+                  {step > 1 ? <Check className="w-3.5 h-3.5 text-emerald-400 stroke-[3]" /> : "1"}
+                </div>
+                <span className="text-xs tracking-wider uppercase font-semibold">Data &amp; Tiket</span>
+              </div>
+
+              {/* Step 2 Indicator */}
+              <div 
+                className={`relative z-10 flex items-center gap-3 px-4 py-2 rounded-full transition-all ${
+                  step === 2
+                    ? "bg-secondary text-slate-950 font-bold shadow-[0_0_15px_rgba(176,198,255,0.4)]"
+                    : "bg-slate-900/80 border border-white/10 text-slate-400"
+                }`}
+              >
+                <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${
+                  step === 2 ? "bg-slate-950 text-secondary" : "bg-white/10 text-slate-400"
+                }`}>
+                  2
+                </div>
+                <span className="text-xs tracking-wider uppercase font-semibold">Pembayaran</span>
+              </div>
+            </div>
+          </div>
+
           {/* Checkout Form */}
           <form onSubmit={handleSubmit} className="space-y-10 max-w-4xl mx-auto">
-            
-            {/* ======================================================== */}
-            {/* SECTION 1: KONFIRMASI DATA PESERTA */}
-            {/* ======================================================== */}
+            {step === 1 && (
+              <div className="space-y-10 animate-in fade-in slide-in-from-left-4 duration-300">
+                {/* ======================================================== */}
+                {/* SECTION 1: KONFIRMASI DATA PESERTA */}
+                {/* ======================================================== */}
             <div className="bg-slate-950/60 backdrop-blur-xl rounded-2xl p-6 md:p-10 relative overflow-hidden shadow-[0_4px_25px_rgba(0,0,0,0.5)] border border-white/10">
               <div className="mb-6 pb-4 border-b border-white/10">
                 <CustomHeading 
@@ -1353,7 +1813,7 @@ export default function ColorFunCheckoutPage() {
                   className="text-2xl md:text-3xl text-primary-fixed flex items-center gap-3" 
                 />
                 <p className="text-xs text-slate-300 mt-1">
-                  Data ini diambil secara otomatis dari akun profil terdaftar Anda
+                  Data awal diambil secara otomatis dari akun profil terdaftar Anda dan dapat disesuaikan kembali
                 </p>
               </div>
 
@@ -1361,16 +1821,17 @@ export default function ColorFunCheckoutPage() {
                 {/* Nama Lengkap */}
                 <div className="space-y-2">
                   <label className="font-poppins font-semibold text-sm text-slate-100 uppercase tracking-wider block">
-                    Nama Lengkap
+                    Nama Lengkap *
                   </label>
                   <div className="relative">
                     <input 
                       type="text" 
-                      value={userData.fullName || ''} 
-                      readOnly 
-                      className="text-slate-100 bg-black/20 border border-white/10 cursor-not-allowed z-10 relative px-4 py-3 w-full rounded-lg outline-none font-poppins pr-10" 
+                      required
+                      value={userData.fullName} 
+                      onChange={(e) => setUserData((prev) => ({ ...prev, fullName: e.target.value }))}
+                      placeholder="Masukkan nama lengkap Anda"
+                      className="w-full bg-black/30 border border-white/10 rounded-lg px-4 py-3 text-white placeholder:text-slate-400 focus:border-secondary focus:ring-1 focus:ring-secondary outline-none transition-all font-poppins" 
                     />
-                    <Lock className="w-4 h-4 text-slate-400 absolute right-4 top-1/2 -translate-y-1/2 z-20 pointer-events-none" />
                   </div>
                 </div>
 
@@ -1378,31 +1839,33 @@ export default function ColorFunCheckoutPage() {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   <div className="space-y-2">
                     <label className="font-poppins font-semibold text-sm text-slate-100 uppercase tracking-wider block">
-                      Nomor WhatsApp
+                      Nomor WhatsApp *
                     </label>
                     <div className="relative">
                       <input 
                         type="text" 
-                        value={userData.phone || ''} 
-                        readOnly 
-                        className="text-slate-100 bg-black/20 border border-white/10 cursor-not-allowed z-10 relative px-4 py-3 w-full rounded-lg outline-none font-poppins pr-10" 
+                        required
+                        value={userData.phone} 
+                        onChange={(e) => setUserData((prev) => ({ ...prev, phone: e.target.value }))}
+                        placeholder="Contoh: 081234567890"
+                        className="w-full bg-black/30 border border-white/10 rounded-lg px-4 py-3 text-white placeholder:text-slate-400 focus:border-secondary focus:ring-1 focus:ring-secondary outline-none transition-all font-poppins" 
                       />
-                      <Lock className="w-4 h-4 text-slate-400 absolute right-4 top-1/2 -translate-y-1/2 z-20 pointer-events-none" />
                     </div>
                   </div>
 
                   <div className="space-y-2">
                     <label className="font-poppins font-semibold text-sm text-slate-100 uppercase tracking-wider block">
-                      Email
+                      Email *
                     </label>
                     <div className="relative">
                       <input 
                         type="email" 
-                        value={userData.email || ''} 
-                        readOnly 
-                        className="text-slate-100 bg-black/20 border border-white/10 cursor-not-allowed z-10 relative px-4 py-3 w-full rounded-lg outline-none font-poppins pr-10" 
+                        required
+                        value={userData.email} 
+                        onChange={(e) => setUserData((prev) => ({ ...prev, email: e.target.value }))}
+                        placeholder="Contoh: user@example.com"
+                        className="w-full bg-black/30 border border-white/10 rounded-lg px-4 py-3 text-white placeholder:text-slate-400 focus:border-secondary focus:ring-1 focus:ring-secondary outline-none transition-all font-poppins" 
                       />
-                      <Lock className="w-4 h-4 text-slate-400 absolute right-4 top-1/2 -translate-y-1/2 z-20 pointer-events-none" />
                     </div>
                   </div>
                 </div>
@@ -1819,31 +2282,58 @@ export default function ColorFunCheckoutPage() {
               </div>
             </div>
 
-            {/* ======================================================== */}
-            {/* SECTION 3: PEMBAYARAN & FINALISASI */}
-            {/* ======================================================== */}
-            <div className="bg-slate-950/60 backdrop-blur-xl rounded-2xl p-6 md:p-10 relative overflow-hidden shadow-[0_4px_25px_rgba(0,0,0,0.5)] border border-white/10">
-              <div className="mb-6 pb-4 border-b border-white/10">
-                <CustomHeading 
-                  as="h2" 
-                  text="Pembayaran &amp; Finalisasi" 
-                  className="text-2xl md:text-3xl text-primary-fixed flex items-center gap-3" 
-                />
-                <p className="text-xs text-slate-300 mt-1">
-                  Biaya registrasi sudah mencakup Race Kit, Glow Powder Zone Access, &amp; Finisher Medal
-                </p>
+                {/* ======================================================== */}
+                {/* SECTION 3: PILIHAN PAKET & TIKET PENDAFTARAN */}
+                {/* ======================================================== */}
+                <div className="bg-slate-950/60 backdrop-blur-xl rounded-2xl p-6 md:p-10 relative overflow-hidden shadow-[0_4px_25px_rgba(0,0,0,0.5)] border border-white/10">
+                  <div className="mb-6 pb-4 border-b border-white/10">
+                    <CustomHeading 
+                      as="h2" 
+                      text="Pilihan Paket &amp; Tiket Pendaftaran" 
+                      className="text-2xl md:text-3xl text-primary-fixed flex items-center gap-3" 
+                    />
+                    <p className="text-xs text-slate-300 mt-1">
+                      Pilih tiket reguler aktif atau paket promo bundling yang tersedia untuk ColorFun Run
+                    </p>
+                  </div>
+
+              {/* Informational Phase & Milestone Banner */}
+              <div className="p-4 rounded-2xl bg-gradient-to-r from-primary-container/10 via-surface-container-high/60 to-secondary/10 border border-white/10 flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6">
+                <div className="flex items-center gap-2.5 flex-wrap">
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider bg-secondary/20 text-secondary border border-secondary/40">
+                    <Sparkles className="w-3.5 h-3.5 text-[#ffd700]" />
+                    Fase Aktif: {cmsPricing?.phase?.trim() || "Fase Pendaftaran"}
+                  </span>
+                  {cmsPricing?.phase_quota ? (
+                    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-mono font-medium text-slate-300 bg-white/5 border border-white/10">
+                      <Users className="w-3.5 h-3.5 text-secondary" />
+                      Milestone Kuota: {subQuota?.usedInPhase ?? 0} / {cmsPricing.phase_quota} Peserta
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-mono font-medium text-emerald-400 bg-emerald-500/10 border border-emerald-500/20">
+                      Milestone Kuota: Terbuka
+                    </span>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-2 text-xs text-slate-400">
+                  <span>Harga Normal:</span>
+                  <span className="font-mono font-bold text-slate-300 line-through decoration-rose-500 decoration-2 text-sm">
+                    Rp {CFR_TICKET_PRICE.toLocaleString("id-ID")}
+                  </span>
+                </div>
               </div>
 
-              {/* ── PRICING SELECTION (Standard Phase vs Active Promo Bundles) ── */}
+              {/* ── PRICING SELECTION (Anchor Pricing Baseline Card & Active Promo Bundles) ── */}
               <div className="mb-8 space-y-3">
                 <div className="flex items-center justify-between">
                   <label className="font-semibold text-xs text-primary-fixed uppercase tracking-wider flex items-center gap-1.5">
                     <Sparkles className="w-3.5 h-3.5 text-[#ffd700]" />
-                    Pilihan Paket &amp; Tiket Pendaftaran
+                    Katalog Promo &amp; Bundling Aktif
                   </label>
                   {!loadingPromos && activePromos.length > 0 && (
                     <span className="text-[11px] text-secondary font-medium hidden sm:inline">
-                      Pilih salah satu paket di bawah
+                      Pilih salah satu paket promo di bawah
                     </span>
                   )}
                 </div>
@@ -1853,130 +2343,38 @@ export default function ColorFunCheckoutPage() {
                     <Loader2 className="w-5 h-5 text-secondary animate-spin" />
                   </div>
                 ) : activePromos.length === 0 ? (
-                  /* Scenario A: No Active Promos -> Dynamic Base Price Card */
-                  <div className={`p-5 md:p-6 rounded-2xl border-2 transition-all flex items-center justify-between gap-4 ${
-                    isRegularSoldOut
-                      ? "bg-black/20 border-white/10 opacity-60 pointer-events-none cursor-not-allowed backdrop-blur-sm grayscale-[25%]"
-                      : "bg-gradient-to-r from-secondary/15 via-slate-800/80 to-primary/15 border-secondary/50 shadow-[0_0_25px_rgba(176,198,255,0.15)]"
-                  }`}>
-                    <div>
-                      <div className="flex items-center gap-2 mb-1.5 flex-wrap">
-                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider text-slate-300 bg-white/10 border border-white/20">
-                          Fase Pendaftaran Aktif
-                        </span>
-                        {isRegularSoldOut ? (
-                          <span className="text-[10px] font-bold font-mono px-2.5 py-0.5 rounded-full bg-error/20 text-error border border-error/40 uppercase tracking-wider flex items-center gap-1">
-                            <Ban className="w-2.5 h-2.5" />
-                            Sold Out / Kuota Habis
-                          </span>
-                        ) : subQuota && !subQuota.isPhaseDateActive ? (
-                          <span className="text-[10px] font-bold font-mono px-2.5 py-0.5 rounded-full bg-slate-500/20 text-slate-300 border border-slate-500/40 uppercase tracking-wider flex items-center gap-1">
-                            <Clock className="w-2.5 h-2.5" />
-                            {subQuota.availabilityReason === "phase_date_not_started" ? "Periode Belum Dimulai" : "Periode Berakhir"}
-                          </span>
-                        ) : subQuota?.remainingPhaseQuota !== null && subQuota?.remainingPhaseQuota !== undefined ? (
-                          <span className="text-[10px] font-mono font-semibold px-2 py-0.5 rounded-full bg-white/5 text-slate-300 border border-white/10">
-                            Sisa: {subQuota.remainingPhaseQuota} Slot
-                          </span>
-                        ) : null}
-                      </div>
-                      <h3 className="text-xl md:text-2xl font-bold text-white tracking-wide">
-                        {cmsPricing?.phase?.trim() || "Tiket Reguler"}
-                      </h3>
-                    </div>
-                    <div className="text-right shrink-0">
-                      <p className="text-[11px] uppercase tracking-wider text-slate-400 font-medium">Total</p>
-                      <p className="text-2xl md:text-3xl font-headline-md font-bold text-white">
-                        Rp {CFR_TICKET_PRICE.toLocaleString("id-ID")}
-                      </p>
-                    </div>
+                  /* Scenario A: No Active Promos */
+                  <div className="p-8 rounded-2xl bg-black/30 border border-white/10 text-center space-y-3">
+                    <AlertCircle className="w-8 h-8 text-amber-300 mx-auto" />
+                    <h4 className="text-base font-bold text-white">Belum Ada Paket Promo Aktif</h4>
+                    <p className="text-xs text-slate-400 max-w-md mx-auto">
+                      Seluruh paket pendaftaran ColorFun Run disalurkan secara eksklusif melalui katalog promo &amp; bundling. Silakan hubungi panitia untuk informasi ketersediaan penawaran berikutnya.
+                    </p>
                   </div>
                 ) : (
-                  /* Scenario B: Active Promos Exist (Side-by-Side Selectable Cards) */
+                  /* Scenario B: Active Promos Exist (Anchor Baseline Card + Vibrant Promo Cards) */
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                    {/* Left Card: Dynamic Phase Name / Base Ticket */}
-                    {(() => {
-                      const isBaseAvailable = !isRegularSoldOut;
-                      return (
-                        <div
-                          role="button"
-                          tabIndex={isBaseAvailable ? 0 : -1}
-                          aria-disabled={!isBaseAvailable}
-                          onClick={() => {
-                            if (!isBaseAvailable) {
-                              setError("Maaf, kuota untuk kategori tiket/promo yang Anda pilih baru saja habis.");
-                              return;
-                            }
-                            handleSelectStandardPrice();
-                          }}
-                          onKeyDown={(e) => {
-                            if ((e.key === "Enter" || e.key === " ") && isBaseAvailable) {
-                              handleSelectStandardPrice();
-                            }
-                          }}
-                          className={`relative rounded-2xl p-5 border-2 transition-all duration-300 flex flex-col justify-between select-none ${
-                            !isBaseAvailable
-                              ? "bg-black/20 border-white/10 opacity-60 pointer-events-none cursor-not-allowed backdrop-blur-sm grayscale-[25%]"
-                              : selectedPricingId === "standard"
-                              ? "bg-secondary/15 border-secondary shadow-[0_0_25px_rgba(176,198,255,0.2)] ring-1 ring-secondary/50 cursor-pointer"
-                              : "bg-black/30 border-white/10 hover:border-white/20 hover:bg-black/40 opacity-90 hover:opacity-100 cursor-pointer"
-                          }`}
-                        >
-                          <div>
-                            <div className="flex items-center justify-between mb-3">
-                              <div className="flex items-center gap-1.5 flex-wrap">
-                                <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider text-slate-300 bg-white/10 border border-white/20">
-                                  Fase Aktif
-                                </span>
-                                {isRegularSoldOut ? (
-                                  <span className="text-[10px] font-bold font-mono px-2.5 py-0.5 rounded-full bg-error/20 text-error border border-error/40 uppercase tracking-wider flex items-center gap-1">
-                                    <Ban className="w-2.5 h-2.5" />
-                                    Sold Out / Kuota Habis
-                                  </span>
-                                ) : subQuota && !subQuota.isPhaseDateActive ? (
-                                  <span className="text-[10px] font-bold font-mono px-2.5 py-0.5 rounded-full bg-slate-500/20 text-slate-300 border border-slate-500/40 uppercase tracking-wider flex items-center gap-1">
-                                    <Clock className="w-2.5 h-2.5" />
-                                    {subQuota.availabilityReason === "phase_date_not_started" ? "Periode Belum Dimulai" : "Periode Berakhir"}
-                                  </span>
-                                ) : subQuota?.remainingPhaseQuota !== null && subQuota?.remainingPhaseQuota !== undefined ? (
-                                  <span className="text-[10px] font-mono font-semibold px-2 py-0.5 rounded-full bg-white/5 text-slate-300 border border-white/10">
-                                    Sisa: {subQuota.remainingPhaseQuota}
-                                  </span>
-                                ) : null}
-                              </div>
-
-                              {!isBaseAvailable ? (
-                                <span className="text-[10px] font-bold font-mono px-2.5 py-1 rounded-full bg-error/20 text-error border border-error/40 uppercase tracking-wider flex items-center gap-1 shrink-0">
-                                  <Ban className="w-3 h-3" />
-                                  Sold Out / Kuota Habis
-                                </span>
-                              ) : (
-                                <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-colors shrink-0 ${
-                                  selectedPricingId === "standard"
-                                    ? "border-secondary bg-secondary"
-                                    : "border-neutral-600"
-                                }`}>
-                                  {selectedPricingId === "standard" && (
-                                    <Check className="w-3 h-3 text-primary-container font-bold stroke-[3]" />
-                                  )}
-                                </div>
-                              )}
-                            </div>
-
-                            <h4 className="font-bold text-base text-white mb-1">
-                              {cmsPricing?.phase?.trim() || "Tiket Reguler"}
-                            </h4>
-                          </div>
-
-                          <div className="pt-3 border-t border-white/10 flex items-baseline justify-between">
-                            <span className="text-[11px] text-slate-400 uppercase tracking-wider">Total</span>
-                            <span className="text-xl font-bold font-headline-md text-white">
-                              Rp {CFR_TICKET_PRICE.toLocaleString("id-ID")}
-                            </span>
-                          </div>
+                    {/* Anchor Pricing Baseline Card (Non-selectable / Disabled) */}
+                    <div className="relative rounded-2xl p-5 border border-dashed border-white/15 bg-black/20 backdrop-blur-sm flex flex-col justify-between select-none opacity-60 pointer-events-none grayscale-[30%]">
+                      <div>
+                        <div className="flex items-center justify-between mb-3">
+                          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider text-slate-400 bg-white/5 border border-white/10">
+                            Harga Normal
+                          </span>
                         </div>
-                      );
-                    })()}
+
+                        <h4 className="font-bold text-base text-slate-300">
+                          {cmsPricing?.phase?.trim() || "Tiket Reguler"}
+                        </h4>
+                      </div>
+
+                      <div className="pt-4 mt-3 border-t border-white/10 flex items-baseline justify-between">
+                        <span className="text-[11px] text-slate-400 uppercase tracking-wider">Harga Dasar</span>
+                        <span className="text-xl font-bold font-headline-md text-slate-400 line-through decoration-rose-500 decoration-2">
+                          Rp {CFR_TICKET_PRICE.toLocaleString("id-ID")}
+                        </span>
+                      </div>
+                    </div>
 
                     {/* Right Card(s): Promo / Bundling Options */}
                     {activePromos.map((promo) => {
@@ -2093,9 +2491,11 @@ export default function ColorFunCheckoutPage() {
                             <h4 className={`font-bold text-base mb-1 relative z-10 ${!isAvailable ? "text-slate-300" : "text-white"}`}>
                               {promo.title}
                             </h4>
-                            <p className="text-xs text-slate-400 mb-2 line-clamp-2 relative z-10 font-poppins">
-                              {promo.description || "Penawaran promo terbatas untuk event ini."}
-                            </p>
+                            {promo.description ? (
+                              <p className="text-xs text-slate-400 mb-2 line-clamp-2 relative z-10 font-poppins">
+                                {promo.description}
+                              </p>
+                            ) : null}
                             {promo.end_date && (
                               <div className="flex items-center gap-1.5 text-[11px] text-slate-400 font-mono mb-3 relative z-10">
                                 <Clock className="w-3 h-3 text-secondary shrink-0" />
@@ -2237,11 +2637,356 @@ export default function ColorFunCheckoutPage() {
                 )}
               </div>
 
-              {/* Payment Method */}
-              <div className="space-y-4 mb-6">
-                <label className="font-semibold text-sm text-slate-100 uppercase tracking-wider block">
-                  Pilih Metode Pembayaran *
+              {/* Dynamic Special Terms & Conditions Card (Only if promo defines special_terms or requires proof) */}
+              {(currentSpecialTerms.length > 0 || Boolean(appliedPromo?.requires_proof_file)) && (
+                <div className="p-5 md:p-6 rounded-2xl bg-gradient-to-br from-amber-500/10 via-amber-950/20 to-black/40 border border-amber-500/40 shadow-xl space-y-4 mb-8 animate-in fade-in slide-in-from-top-3 duration-300">
+                  <div className="flex items-start gap-3">
+                    <div className="w-9 h-9 rounded-xl bg-amber-500/20 border border-amber-500/30 flex items-center justify-center text-amber-300 shrink-0 mt-0.5 shadow-sm">
+                      <Megaphone className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h4 className="font-poppins font-bold text-base text-amber-200 flex items-center gap-2">
+                        Syarat Khusus Paket Ini
+                        <span className="text-[10px] font-mono font-semibold px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 uppercase">
+                          Wajib Dipenuhi
+                        </span>
+                      </h4>
+                      <p className="text-xs text-slate-300 mt-0.5 font-poppins">
+                        Paket promo <strong className="text-white font-medium">{appliedPromo?.title}</strong> memiliki persyaratan khusus pendaftaran berikut yang wajib dipatuhi:
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Itemized Requirements List (if any) */}
+                  {currentSpecialTerms.length > 0 && (
+                    <div className="space-y-2.5 pt-1 pl-1">
+                      {currentSpecialTerms.map((term, idx) => (
+                        <div key={idx} className="flex items-start gap-3 text-xs text-slate-200">
+                          <div className="w-5 h-5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 flex items-center justify-center text-[10px] font-bold font-mono shrink-0 mt-0.5">
+                            {idx + 1}
+                          </div>
+                          <span className="leading-relaxed font-sans font-medium text-slate-100">{term}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Dedicated Proof File Uploader (If promo requires proof) */}
+                  {appliedPromo?.requires_proof_file && (
+                    <div className="pt-3 border-t border-amber-500/20 space-y-3">
+                      <div>
+                        <label className="text-xs sm:text-sm font-semibold text-amber-200 flex items-center gap-2">
+                          <Upload className="w-4 h-4 text-amber-400" />
+                          Upload Berkas Bukti Persyaratan
+                          <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-red-500/20 text-red-300 border border-red-500/30 uppercase font-bold">
+                            Wajib Diunggah
+                          </span>
+                        </label>
+                        <p className="text-xs text-slate-300 mt-1 font-poppins">
+                          Format berkas: JPG, JPEG, PNG, atau PDF (Maksimal ukuran 5MB).
+                        </p>
+                      </div>
+
+                      {/* Helper text if proof_instruction is filled */}
+                      {Boolean((appliedPromo.proof_instruction || appliedPromo.proof_instructions)?.trim()) && (
+                        <div className="p-3 rounded-xl bg-amber-500/15 border border-amber-500/30 text-xs text-amber-200 font-sans flex items-start gap-2">
+                          <span className="font-semibold text-amber-300 shrink-0">Panduan:</span>
+                          <span className="italic leading-relaxed">
+                            {(appliedPromo.proof_instruction || appliedPromo.proof_instructions)?.trim()}
+                          </span>
+                        </div>
+                      )}
+
+                      {/* File selector & drop area */}
+                      {!promoProofFile ? (
+                        <div
+                          onClick={() => promoProofInputRef.current?.click()}
+                          onDragOver={(e) => e.preventDefault()}
+                          onDrop={(e) => {
+                            e.preventDefault();
+                            const files = e.dataTransfer.files;
+                            if (files && files[0]) handlePromoProofSelect(files[0]);
+                          }}
+                          className="border-2 border-dashed border-amber-500/40 hover:border-amber-400/80 bg-black/40 hover:bg-black/60 rounded-xl p-5 text-center cursor-pointer transition-all group flex flex-col items-center justify-center gap-2"
+                        >
+                          <input
+                            ref={promoProofInputRef}
+                            type="file"
+                            accept=".jpg,.jpeg,.png,.pdf"
+                            className="hidden"
+                            onChange={(e) => {
+                              const f = e.target.files?.[0];
+                              if (f) handlePromoProofSelect(f);
+                            }}
+                          />
+                          <div className="w-10 h-10 rounded-full bg-amber-500/20 border border-amber-500/30 flex items-center justify-center text-amber-300 group-hover:scale-110 transition-transform">
+                            <Upload className="w-5 h-5" />
+                          </div>
+                          <div>
+                            <span className="text-xs font-semibold text-amber-200 group-hover:underline">
+                              Pilih Berkas Bukti atau Tarik ke Sini
+                            </span>
+                            <p className="text-[11px] text-slate-400 mt-0.5 font-sans">
+                              JPG, JPEG, PNG, atau PDF hingga 5MB
+                            </p>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="p-3.5 rounded-xl bg-black/60 border border-amber-500/40 flex items-center justify-between gap-3 animate-in fade-in duration-200">
+                          <div className="flex items-center gap-3 overflow-hidden">
+                            {promoProofPreview ? (
+                              <img
+                                src={promoProofPreview}
+                                alt="Preview Bukti"
+                                className="w-12 h-12 rounded-lg object-cover border border-amber-500/40 shrink-0 bg-black/40"
+                              />
+                            ) : (
+                              <div className="w-12 h-12 rounded-lg bg-amber-500/20 border border-amber-500/30 flex items-center justify-center text-amber-300 shrink-0">
+                                <FileText className="w-6 h-6" />
+                              </div>
+                            )}
+                            <div className="overflow-hidden">
+                              <p className="text-xs font-semibold text-white truncate font-sans">
+                                {promoProofFile.name}
+                              </p>
+                              <p className="text-[11px] text-amber-300/80 font-mono mt-0.5">
+                                {(promoProofFile.size / (1024 * 1024)).toFixed(2)} MB • {promoProofFile.type.includes("pdf") ? "Dokumen PDF" : "Gambar"}
+                              </p>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-2 shrink-0">
+                            <button
+                              type="button"
+                              onClick={() => promoProofInputRef.current?.click()}
+                              className="px-2.5 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-xs font-medium text-slate-200 transition-colors cursor-pointer"
+                            >
+                              Ganti
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setPromoProofFile(null);
+                                setPromoProofPreview((prev) => {
+                                  if (prev) URL.revokeObjectURL(prev);
+                                  return null;
+                                });
+                                setPromoProofError(null);
+                                if (promoProofInputRef.current) promoProofInputRef.current.value = "";
+                              }}
+                              className="p-1.5 rounded-lg text-slate-400 hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer"
+                              title="Hapus berkas"
+                            >
+                              <X className="w-4 h-4" />
+                            </button>
+                          </div>
+                          <input
+                            ref={promoProofInputRef}
+                            type="file"
+                            accept=".jpg,.jpeg,.png,.pdf"
+                            className="hidden"
+                            onChange={(e) => {
+                              const f = e.target.files?.[0];
+                              if (f) handlePromoProofSelect(f);
+                            }}
+                          />
+                        </div>
+                      )}
+
+                      {promoProofError && (
+                        <div className="p-2.5 rounded-lg bg-red-500/10 border border-red-500/30 text-red-300 text-xs flex items-center gap-2">
+                          <AlertCircle className="w-4 h-4 shrink-0" />
+                          <span>{promoProofError}</span>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Inline Mandatory Confirmation Checkbox */}
+                  <div className="pt-3 border-t border-amber-500/20">
+                    <label className="flex items-start gap-3 p-3 rounded-xl bg-black/40 border border-amber-500/30 cursor-pointer hover:bg-black/60 transition-colors">
+                      <div className="flex items-center h-5 mt-0.5">
+                        <input
+                          required
+                          type="checkbox"
+                          checked={persetujuanSyaratKhusus}
+                          onChange={(e) => setPersetujuanSyaratKhusus(e.target.checked)}
+                          className="w-5 h-5 rounded border-amber-500/40 text-amber-500 focus:ring-amber-400 bg-black/50 cursor-pointer accent-amber-500"
+                        />
+                      </div>
+                      <span className="text-xs sm:text-sm font-poppins text-amber-100 font-medium leading-relaxed select-none">
+                        Saya menyanggupi seluruh persyaratan khusus di atas dan bersedia diverifikasi oleh panitia.
+                      </span>
+                    </label>
+                  </div>
+                </div>
+              )}
+
+              {/* Health & Liability Waiver Consent Checkbox */}
+              <div className="pt-6 border-t border-white/10">
+                <label className="flex items-start gap-4 p-4 rounded-xl bg-black/30 border border-white/10 cursor-pointer hover:bg-black/40 transition-colors">
+                  <div className="flex items-center h-5 mt-0.5">
+                    <input 
+                      required 
+                      type="checkbox" 
+                      checked={persetujuanSehat} 
+                      onChange={e => setPersetujuanSehat(e.target.checked)} 
+                      className="w-5 h-5 rounded border-white/20 text-secondary focus:ring-secondary bg-black/40 cursor-pointer" 
+                    />
+                  </div>
+                  <span className="text-sm font-poppins text-white/90 leading-relaxed">
+                    Saya menyatakan dalam kondisi fisik yang sehat, siap mengikuti seluruh rangkaian ColorFun Run 5K, dan membebaskan panitia dari segala bentuk tuntutan atas cedera fisik yang terjadi di luar kendali pihak penyelenggara.
+                  </span>
                 </label>
+              </div>
+
+              {/* Step 1 Action Button / Gatekeeper */}
+              <div className="flex flex-col items-end gap-2 pt-2">
+                <button 
+                  type="button" 
+                  onClick={handleAdvanceToStep2}
+                  disabled={!isStep1Valid || isValidatingStep1Quota || isCurrentOptionSoldOut || areAllOptionsSoldOut} 
+                  className={`bg-primary-container text-primary px-10 py-4 rounded-full font-medium tracking-wider uppercase flex items-center gap-3 transition-all ${
+                    isValidatingStep1Quota
+                      ? "opacity-60 cursor-not-allowed pointer-events-none"
+                      : !isStep1Valid || isCurrentOptionSoldOut || areAllOptionsSoldOut
+                      ? "opacity-50 cursor-not-allowed" 
+                      : "hover:bg-primary-container/80 shadow-[0_0_20px_rgba(176,198,255,0.2)] cursor-pointer"
+                  }`}
+                >
+                  {isValidatingStep1Quota ? (
+                    <>
+                      <Loader2 className="w-5 h-5 animate-spin" />
+                      <span>Memverifikasi Kuota...</span>
+                    </>
+                  ) : !selectedPricingId ? (
+                    <span>Pilih Paket Terlebih Dahulu</span>
+                  ) : areAllOptionsSoldOut ? (
+                    <span>Sold Out / Kuota Habis</span>
+                  ) : isCurrentOptionSoldOut ? (
+                    <span>{selectedPricingId === "standard" ? "Sold Out / Kuota Habis" : "Promo Habis"}</span>
+                  ) : (
+                    <>
+                      <span>Lanjut ke Pembayaran</span>
+                      <ArrowRight className="w-5 h-5" />
+                    </>
+                  )}
+                </button>
+                {!selectedPricingId ? (
+                  <p className="text-xs text-amber-300 font-medium">
+                    Silakan pilih salah satu kategori paket atau promo yang masih tersedia di atas.
+                  </p>
+                ) : areAllOptionsSoldOut ? (
+                  <p className="text-xs text-error font-medium">
+                    Seluruh tiket dan paket promo ColorFun Run saat ini telah habis terjual (Sold Out / Kuota Habis).
+                  </p>
+                ) : isCurrentOptionSoldOut ? (
+                  <p className="text-xs text-amber-300 font-medium">
+                    {selectedPricingId === "standard"
+                      ? "Kuota tiket reguler untuk fase ini sudah habis (Sold Out / Kuota Habis). Silakan pilih paket promo/bundling aktif di atas."
+                      : "Kuota untuk paket promo yang Anda pilih sudah habis (Promo Habis). Silakan pilih kategori tiket atau promo lainnya."}
+                  </p>
+                ) : !isStep1Valid ? (
+                  <p className="text-xs text-on-surface-variant/70 font-poppins">
+                    {appliedPromo?.requires_proof_file && !promoProofFile
+                      ? "Harap unggah berkas bukti persyaratan khusus promo di atas sebelum melanjutkan ke pembayaran."
+                      : (currentSpecialTerms.length > 0 || appliedPromo?.requires_proof_file) && !persetujuanSyaratKhusus
+                      ? "Harap setujui persyaratan khusus paket promo dan pernyataan kesehatan di atas untuk melanjutkan ke pembayaran."
+                      : !persetujuanSehat
+                      ? "Harap centang persetujuan kesehatan & kesiapan fisik sebelum melanjutkan ke pembayaran."
+                      : "Lengkapi seluruh data peserta, pilih paket aktif, dan setujui pernyataan di atas untuk melanjutkan ke pembayaran."}
+                  </p>
+                ) : null}
+              </div>
+            </div>
+          </div>
+        )}
+
+            {/* ======================================================== */}
+            {/* STEP 2: PEMBAYARAN & FINALISASI */}
+            {/* ======================================================== */}
+            {step === 2 && (
+              <div className="space-y-10 animate-in fade-in slide-in-from-right-4 duration-300">
+                <div className="bg-slate-950/60 backdrop-blur-xl rounded-2xl p-6 md:p-10 relative overflow-hidden shadow-[0_4px_25px_rgba(0,0,0,0.5)] border border-white/10">
+                  <div className="mb-6 pb-4 border-b border-white/10 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div>
+                      <CustomHeading 
+                        as="h2" 
+                        text="Pembayaran &amp; Finalisasi" 
+                        className="text-2xl md:text-3xl text-primary-fixed flex items-center gap-3" 
+                      />
+                      <p className="text-xs text-slate-300 mt-1">
+                        Selesaikan transfer sesuai nominal dan unggah bukti transfer pembayaran Anda
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setStep(1);
+                        window.scrollTo({ top: 0, behavior: "smooth" });
+                      }}
+                      className="self-start sm:self-auto text-xs text-secondary hover:text-white flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-secondary/10 hover:bg-secondary/20 border border-secondary/30 transition-colors cursor-pointer"
+                    >
+                      <ArrowLeft className="w-3.5 h-3.5" />
+                      <span>Ubah Data Peserta</span>
+                    </button>
+                  </div>
+
+                  {/* Ringkasan Pendaftaran & Total Tagihan */}
+                  <div className="mb-8 p-5 rounded-xl bg-black/40 border border-white/10 space-y-4">
+                    <h4 className="font-semibold text-xs text-primary-fixed uppercase tracking-wider flex items-center gap-2">
+                      <FileText className="w-4 h-4 text-secondary" />
+                      Ringkasan Pendaftaran
+                    </h4>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-xs">
+                      <div className="p-3.5 rounded-lg bg-white/5 border border-white/5">
+                        <span className="text-slate-400 block mb-1">Peserta Utama</span>
+                        <span className="font-semibold text-white text-sm truncate block">{userData.fullName || "-"}</span>
+                      </div>
+                      <div className="p-3.5 rounded-lg bg-white/5 border border-white/5">
+                        <span className="text-slate-400 block mb-1">Pilihan Paket</span>
+                        <span className="font-semibold text-white text-sm truncate block">
+                          {selectedPricingId === "standard" ? cmsPricing.phase || "Tiket Reguler" : appliedPromo?.title}
+                        </span>
+                      </div>
+                      <div className="p-3.5 rounded-lg bg-white/5 border border-white/5">
+                        <span className="text-slate-400 block mb-1">Total Peserta</span>
+                        <span className="font-semibold text-white text-sm block">
+                          {kapasitas} Orang {extraMembers.length > 0 ? `(1 Utama + ${extraMembers.length} Anggota)` : ""}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Total Tagihan Bar */}
+                    <div className="p-4 rounded-xl border border-secondary/50 bg-secondary/10 flex justify-between items-center mt-3">
+                      <div>
+                        <h3 className="font-semibold text-xs uppercase text-secondary tracking-wider">
+                          Total Tagihan Pembayaran
+                        </h3>
+                        <div className="flex items-baseline gap-2.5 mt-1">
+                          <p className="font-headline-md text-2xl text-emerald-400 font-bold">
+                            Rp {finalPrice.toLocaleString("id-ID")}
+                          </p>
+                          {discountAmount > 0 && (
+                            <p className="text-xs text-slate-400 line-through font-mono">
+                              Rp {totalBasePrice.toLocaleString("id-ID")}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                      {appliedPromo && (
+                        <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-secondary/20 text-secondary border border-secondary/30">
+                          Kupon Aktif
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Payment Method */}
+                  <div className="space-y-4 mb-6">
+                    <label className="font-semibold text-sm text-slate-100 uppercase tracking-wider block">
+                      Pilih Metode Pembayaran *
+                    </label>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   {/* Option 1: Bank Transfer (BNI) */}
                   <label 
@@ -2488,70 +3233,49 @@ export default function ColorFunCheckoutPage() {
                     )}
                   </div>
                 )}
-              </div>
-
-              {/* Waiver Checkbox */}
-              <label className="flex items-start gap-4 p-4 rounded-xl bg-black/30 border border-white/10 cursor-pointer hover:bg-black/40 transition-colors">
-                <div className="flex items-center h-5 mt-0.5">
-                  <input 
-                    required 
-                    type="checkbox" 
-                    checked={persetujuanSehat} 
-                    onChange={e => setPersetujuanSehat(e.target.checked)} 
-                    className="w-5 h-5 rounded border-white/20 text-secondary focus:ring-secondary bg-black/40" 
-                  />
                 </div>
-                <span className="text-sm font-poppins text-white/90 leading-relaxed">
-                  Saya menyatakan dalam kondisi fisik yang sehat, siap mengikuti seluruh rangkaian ColorFun Run 5K, dan membebaskan panitia dari segala bentuk tuntutan atas cedera fisik yang terjadi di luar kendali pihak penyelenggara.
-                </span>
-              </label>
-            </div>
 
-            {/* Submit Button */}
-            <div className="flex flex-col items-end gap-2 pt-4">
-              <button 
-                disabled={!isFormValid || isSubmitting || isCurrentOptionSoldOut || areAllOptionsSoldOut} 
-                type="submit" 
-                className={`bg-primary-container text-primary px-10 py-4 rounded-full font-medium tracking-wider uppercase flex items-center gap-3 transition-all ${
-                  isSubmitting
-                    ? "opacity-60 cursor-not-allowed pointer-events-none"
-                    : !isFormValid || isCurrentOptionSoldOut || areAllOptionsSoldOut
-                    ? "opacity-50 cursor-not-allowed" 
-                    : "hover:bg-primary-container/80 shadow-[0_0_20px_rgba(176,198,255,0.2)] cursor-pointer"
-                }`}
-              >
-                {isSubmitting ? (
-                  <>
-                    <Loader2 className="w-5 h-5 animate-spin" />
-                    <span>Memproses Pendaftaran...</span>
-                  </>
-                ) : areAllOptionsSoldOut ? (
-                  <span>Sold Out / Kuota Habis</span>
-                ) : isCurrentOptionSoldOut ? (
-                  <span>{selectedPricingId === "standard" ? "Sold Out / Kuota Habis" : "Promo Habis"}</span>
-                ) : (
-                  <>
-                    <span>Kirim Pembayaran</span>
-                    <ArrowRight className="w-5 h-5" />
-                  </>
-                )}
-              </button>
-              {areAllOptionsSoldOut ? (
-                <p className="text-xs text-error font-medium">
-                  Seluruh tiket dan paket promo ColorFun Run saat ini telah habis terjual (Sold Out / Kuota Habis).
-                </p>
-              ) : isCurrentOptionSoldOut ? (
-                <p className="text-xs text-amber-300 font-medium">
-                  {selectedPricingId === "standard"
-                    ? "Kuota tiket reguler untuk fase ini sudah habis (Sold Out / Kuota Habis). Silakan pilih paket promo/bundling aktif di atas."
-                    : "Kuota untuk paket promo yang Anda pilih sudah habis (Promo Habis). Silakan pilih kategori tiket atau promo lainnya."}
-                </p>
-              ) : !isFormValid ? (
-                <p className="text-xs text-on-surface-variant/70 font-poppins">
-                  Lengkapi seluruh data wajib &amp; persetujuan di atas untuk dapat mengirim pembayaran.
-                </p>
-              ) : null}
+                {/* Navigation Controls: Back to Step 1 & Submit */}
+                <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pt-4">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setStep(1);
+                      window.scrollTo({ top: 0, behavior: "smooth" });
+                    }}
+                    className="w-full sm:w-auto px-6 py-4 rounded-full border border-white/20 text-slate-300 hover:text-white hover:bg-white/10 font-medium text-xs tracking-wider uppercase flex items-center justify-center gap-2 transition-all cursor-pointer"
+                  >
+                    <ArrowLeft className="w-4 h-4" />
+                    <span>Kembali ke Data Peserta</span>
+                  </button>
+
+                  <button
+                    type="submit"
+                    disabled={!isStep2Valid || isSubmitting}
+                    className={`w-full sm:w-auto px-10 py-4 rounded-full font-medium tracking-wider uppercase flex items-center justify-center gap-3 transition-all ${
+                      isSubmitting
+                        ? "opacity-60 cursor-not-allowed pointer-events-none bg-primary-container text-primary"
+                        : !isStep2Valid
+                        ? "opacity-50 cursor-not-allowed bg-primary-container text-primary"
+                        : "bg-primary-container text-primary hover:bg-primary-container/80 shadow-[0_0_20px_rgba(176,198,255,0.2)] cursor-pointer"
+                    }`}
+                  >
+                    {isSubmitting ? (
+                      <>
+                        <Loader2 className="w-5 h-5 animate-spin" />
+                        <span>{submittingStep || "Memproses Pendaftaran..."}</span>
+                      </>
+                    ) : (
+                      <>
+                        <CheckCircle className="w-5 h-5" />
+                        <span>Konfirmasi Pembayaran</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
             </div>
+          )}
           </form>
 
           {/* QRIS Enlarge Modal */}
@@ -2602,6 +3326,66 @@ export default function ColorFunCheckoutPage() {
                     <Download className="w-4 h-4" />
                     <span>Unduh Gambar QRIS</span>
                   </a>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Floating Toast Notification */}
+          {toast && (
+            <div className="fixed bottom-6 right-6 z-50 animate-in slide-in-from-bottom-5 fade-in duration-300 max-w-md">
+              <div
+                className={`flex items-center gap-3 px-5 py-4 rounded-2xl shadow-2xl border backdrop-blur-xl ${
+                  toast.type === "success"
+                    ? "bg-emerald-950/95 border-emerald-500/40 text-emerald-200"
+                    : "bg-red-950/95 border-red-500/40 text-red-200"
+                }`}
+              >
+                {toast.type === "success" ? (
+                  <CheckCircle className="w-5 h-5 text-emerald-400 shrink-0" />
+                ) : (
+                  <AlertCircle className="w-5 h-5 text-red-400 shrink-0" />
+                )}
+                <span className="text-xs font-semibold font-poppins leading-relaxed">{toast.message}</span>
+                <button
+                  type="button"
+                  onClick={() => setToast(null)}
+                  className="text-slate-400 hover:text-white transition-colors ml-2 shrink-0 p-1"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Quota Exhausted Alert Dialog Modal */}
+          {quotaAlertModal && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-200">
+              <div className="relative w-full max-w-lg rounded-2xl bg-[#0F172A] border border-red-500/40 p-6 md:p-8 shadow-[0_0_50px_rgba(239,68,68,0.25)] text-center space-y-5 animate-in zoom-in-95 duration-200">
+                <div className="w-16 h-16 mx-auto rounded-full bg-red-500/20 border border-red-500/30 flex items-center justify-center text-red-400">
+                  <AlertCircle className="w-8 h-8" />
+                </div>
+                <div className="space-y-2">
+                  <h3 className="text-xl font-bold text-white font-headline">
+                    Kuota Paket Habis
+                  </h3>
+                  <p className="text-sm text-slate-300 leading-relaxed font-poppins">
+                    {quotaAlertModal}
+                  </p>
+                </div>
+                <div className="p-4 rounded-xl bg-white/5 border border-white/10 text-xs text-slate-400 text-left space-y-1">
+                  <p className="font-semibold text-slate-200">Catatan:</p>
+                  <p>Seluruh data identitas diri dan anggota yang telah Anda masukkan tetap tersimpan rapi dan aman.</p>
+                </div>
+                <div className="pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setQuotaAlertModal(null)}
+                    className="w-full py-3.5 px-6 rounded-xl bg-gradient-to-r from-red-500 to-rose-600 hover:from-red-600 hover:to-rose-700 text-white font-semibold text-sm transition-all shadow-lg shadow-red-500/25 flex items-center justify-center gap-2"
+                  >
+                    <span>Pilih Paket Lain yang Tersedia</span>
+                    <ArrowRight className="w-4 h-4" />
+                  </button>
                 </div>
               </div>
             </div>
