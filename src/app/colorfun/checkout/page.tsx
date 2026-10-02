@@ -47,6 +47,7 @@ import SubEventQuotaBadge from "@/components/registration/SubEventQuotaBadge";
 import WhatsAppChannelSection from "@/components/registration/WhatsAppChannelSection";
 import imageCompression from "browser-image-compression";
 import { validatePreCheckoutGuard, validateRegistrationBeforeInsert } from "@/app/actions/checkout";
+import { getWIBTimestamp } from "@/lib/timestamp";
 
 async function compressImage(file: File): Promise<File> {
   if (!file.type.startsWith("image/")) {
@@ -141,6 +142,8 @@ export default function ColorFunCheckoutPage() {
   const [promoProofPreview, setPromoProofPreview] = useState<string | null>(null);
   const [promoProofError, setPromoProofError] = useState<string | null>(null);
   const promoProofInputRef = useRef<HTMLInputElement>(null);
+  // Stable backup for promoProofFile — not wiped by the appliedPromo?.id reset effect
+  const promoProofFileRef = useRef<File | null>(null);
   const [toast, setToast] = useState<{ type: "success" | "error"; message: string } | null>(null);
   const toastTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const [quotaAlertModal, setQuotaAlertModal] = useState<string | null>(null);
@@ -321,6 +324,7 @@ export default function ColorFunCheckoutPage() {
   useEffect(() => {
     setPersetujuanSyaratKhusus(false);
     setPromoProofFile(null);
+    promoProofFileRef.current = null; // clear stable ref in sync with state
     setPromoProofPreview((prev) => {
       if (prev) URL.revokeObjectURL(prev);
       return null;
@@ -340,6 +344,7 @@ export default function ColorFunCheckoutPage() {
       return;
     }
     setPromoProofFile(file);
+    promoProofFileRef.current = file; // persist in stable ref so Step 2 submit can read it
     if (file.type.startsWith("image/")) {
       const url = URL.createObjectURL(file);
       setPromoProofPreview(url);
@@ -1328,10 +1333,13 @@ export default function ColorFunCheckoutPage() {
       const paymentProofUrl = proofPublicData?.publicUrl || "";
 
       // 4.1 Upload Promo Proof File directly to dedicated bucket: promo_proofs
+      // Use promoProofFileRef as the authoritative source: it is immune to the appliedPromo?.id
+      // reset effect that can wipe the promoProofFile state between Step 1 and Step 2.
+      const resolvedPromoProofFile = promoProofFileRef.current || promoProofFile;
       let promoProofUrl: string | null = null;
-      if (promoProofFile) {
+      if (resolvedPromoProofFile) {
         setSubmittingStep("Mengunggah berkas bukti persyaratan promo...");
-        const safePromoProofName = promoProofFile.name.replace(/\s+/g, "_");
+        const safePromoProofName = resolvedPromoProofFile.name.replace(/\s+/g, "_");
         const promoProofPath = `promo-proofs/${Date.now()}_${safePromoProofName}`;
 
         let uploadErr: any = null;
@@ -1339,7 +1347,7 @@ export default function ColorFunCheckoutPage() {
 
         const res1 = await supabase.storage
           .from("promo_proofs")
-          .upload(promoProofPath, promoProofFile, {
+          .upload(promoProofPath, resolvedPromoProofFile, {
             cacheControl: "3600",
             upsert: false,
           });
@@ -1349,7 +1357,7 @@ export default function ColorFunCheckoutPage() {
           // Resilient fallback to payment_proofs or registrations if bucket not provisioned
           const res2 = await supabase.storage
             .from("payment_proofs")
-            .upload(promoProofPath, promoProofFile, {
+            .upload(promoProofPath, resolvedPromoProofFile, {
               cacheControl: "3600",
               upsert: false,
             });
@@ -1359,7 +1367,7 @@ export default function ColorFunCheckoutPage() {
           } else {
             const res3 = await supabase.storage
               .from("payment-proofs")
-              .upload(promoProofPath, promoProofFile, {
+              .upload(promoProofPath, resolvedPromoProofFile, {
                 cacheControl: "3600",
                 upsert: false,
               });
@@ -1369,7 +1377,7 @@ export default function ColorFunCheckoutPage() {
             } else {
               const res4 = await supabase.storage
                 .from("registrations")
-                .upload(promoProofPath, promoProofFile, {
+                .upload(promoProofPath, resolvedPromoProofFile, {
                   cacheControl: "3600",
                   upsert: false,
                 });
@@ -1436,6 +1444,7 @@ export default function ColorFunCheckoutPage() {
         : (cmsPricing.phase || "Tiket Reguler");
 
       const sharedPaymentContext = {
+        created_at: getWIBTimestamp(),
         bukti_transfer_url: paymentProofUrl,
         promo_proof_url: promoProofUrl || null,
         rekening_pengirim: rekeningPengirim.trim(),
@@ -1496,6 +1505,8 @@ export default function ColorFunCheckoutPage() {
       if (!finalGuard.valid) {
         throw new Error(finalGuard.error || "Pendaftaran untuk sub-event ini sedang ditutup atau kuota promo telah habis.");
       }
+
+      console.log('Final Registration Payload to Supabase:', participantsArray);
 
       let { data: regResults, error: regError } = await supabase
         .from("colorfun_registrations")

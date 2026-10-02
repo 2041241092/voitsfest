@@ -1,5 +1,5 @@
 import CustomHeading from "@/components/ui/CustomHeading";
-import { Trophy, MessageSquare, Store, Footprints, Tent } from "lucide-react";
+import { MessageSquare, Store, Footprints, Tent } from "lucide-react";
 
 export default function CelestialEvents() {
   return (
@@ -35,39 +35,13 @@ export default function CelestialEvents() {
 
       <CustomHeading 
         as="h2" 
-        text="Celestial Events" 
+        text="Our Events" 
         className="font-headline-lg text-headline-lg text-amber-400 mb-stack-lg text-center drop-shadow-[0_4px_12px_rgba(0,0,0,0.9)] drop-shadow-[0_2px_4px_rgba(0,0,0,0.9)] [text-shadow:0_3px_12px_rgba(0,0,0,0.9),0_0_20px_rgba(245,158,11,0.4)]" 
       />
       <div className="relative group py-10 w-full flex overflow-hidden max-w-container-max mx-auto">
         <div className="scroll-track">
           <div className="flex gap-gutter pr-[24px] shrink-0">
-            {/* BPC */}
-            <div className="bg-slate-950/45 backdrop-blur-lg rounded-2xl p-stack-lg border border-white/10 shadow-[0_4px_20px_rgba(0,0,0,0.4)] hover:border-white/20 glow-effect group cursor-pointer w-[300px] md:w-[400px] flex-shrink-0 flex flex-col transition-all duration-300">
-              <div className="w-full h-48 mb-6 rounded-xl overflow-hidden relative">
-                <img alt="Futuristic Planet Tech Asset" className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700" src="https://lh3.googleusercontent.com/aida-public/AB6AXuD7pdUGAgQbtPQpKA5n8Yw8MRtT9Vwp6kR7EKGjebjTJj9BM11P3v_eEodz79Q3BxEUIshtZEsVBTlNvvyGYSJRMWmefHNuD4TPOZrN1t3XsW7-g2kt4OaLJnR0a_p1XwztX5ym7rf5ril5zTcxL6cjbA576Ue_o7XKe0cdJsLkIlOMk1ZkrLtPlbNyajbIg3MNZQ7erafcbKQpjAg2j-06ktXNBvClGNTp5fTH6lQjSv9p3L0SAYTZppqSLnnwlo61rQ" />
-                <div className="absolute inset-0 bg-gradient-to-t from-slate-950/80 to-transparent"></div>
-              </div>
-              <div className="flex items-center space-x-4 mb-stack-md">
-                <Trophy className="w-9 h-9 text-secondary-fixed" />
-                <h3 className="font-headline-md text-headline-md text-slate-100 group-hover:text-amber-300 transition-colors font-bold drop-shadow-sm">BPC</h3>
-              </div>
-              <p className="font-body-md text-slate-200/90 leading-relaxed">Business Plan Competition for the visionary innovators of tomorrow.</p>
-            </div>
-            
-            {/* BCC */}
-            <div className="bg-slate-950/45 backdrop-blur-lg rounded-2xl p-stack-lg border border-white/10 shadow-[0_4px_20px_rgba(0,0,0,0.4)] hover:border-white/20 glow-effect group cursor-pointer w-[300px] md:w-[400px] flex-shrink-0 flex flex-col transition-all duration-300">
-              <div className="w-full h-48 mb-6 rounded-xl overflow-hidden relative">
-                <img alt="Coding Star Asset" className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700" src="https://lh3.googleusercontent.com/aida-public/AB6AXuDz5YYSptRpCko4pi_HarCDtcL2300bganYieX3c92v0ACh9fd7o_a3mUNQF8ayrI-c8AyLdWOsuxIBvFCbunJqZ_SACAm5YoBKyh28KQLmGkk5LhAoKH6FInSv7wLiwsrcLFDawpIDxaCL_6TvsdDvoZyI0hyL7mWmvhfL22VsC-iZSqEvJeuLWidPK2vgIWvKtaMBiSklbkOE34vivD1-2lK9FO8SN2O0Fx6uacab_rO-eogoQ4Mn5s0SIiFkbpoQzw" />
-                <div className="absolute inset-0 bg-gradient-to-t from-slate-950/80 to-transparent"></div>
-              </div>
-              <div className="flex items-center space-x-4 mb-stack-md">
-                <Trophy className="w-9 h-9 text-secondary-fixed" />
-                <h3 className="font-headline-md text-headline-md text-slate-100 group-hover:text-amber-300 transition-colors font-bold drop-shadow-sm">BCC</h3>
-              </div>
-              <p className="font-body-md text-slate-200/90 leading-relaxed">Coding challenges that push the boundaries of logical space.</p>
-            </div>
-            
-            {/* Seminar */}
+            {/* Entrepreneurship Seminar */}
             <div className="bg-slate-950/45 backdrop-blur-lg rounded-2xl p-stack-lg border border-white/10 shadow-[0_4px_20px_rgba(0,0,0,0.4)] hover:border-white/20 glow-effect group cursor-pointer w-[300px] md:w-[400px] flex-shrink-0 flex flex-col transition-all duration-300">
               <div className="w-full h-48 mb-6 rounded-xl overflow-hidden relative">
                 <img alt="Bright Constellation Komet" className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700" src="https://lh3.googleusercontent.com/aida-public/AB6AXuB_yNY2ldi60fTsNdDxYI1Pw3lj0gDaKyq4eP2WblfqEAxaov-acm5DkwMLDzaLQmji4sbBlmhfVeXKjgPOPMEBBeipTlTCl-5t360EtdHJaMDhPsJLe9M4tP9YYuMN0FOgvFe9F1lAC3gXEpTfbqH29R-A56r-QF4VtqO2abl5ZlZcZcJvHBvdPQlnhAAl5uUKqe_HiNKjYr-ZKWTPXcSktoDV4huHKU3xtj7KIMIfvPFyOH5KNxQ5lOqs6z_Gr3A38w" />
@@ -122,33 +96,7 @@ export default function CelestialEvents() {
           </div>
           
           <div className="flex gap-gutter pr-[24px] shrink-0">
-            {/* BPC (Duplicate) */}
-            <div className="bg-slate-950/45 backdrop-blur-lg rounded-2xl p-stack-lg border border-white/10 shadow-[0_4px_20px_rgba(0,0,0,0.4)] hover:border-white/20 glow-effect group cursor-pointer w-[300px] md:w-[400px] flex-shrink-0 flex flex-col transition-all duration-300">
-              <div className="w-full h-48 mb-6 rounded-xl overflow-hidden relative">
-                <img alt="Futuristic Planet Tech Asset" className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCEz_BgMlypw_YhBKP3JyssdTLmP4gSKBjH1V-o4YouBsFElJYLL9Ls_ZcXr-M4rV1lNYM7bTWuzEeMYKJVmHCsUlFaKSxWOAmva-TEEIGWBoGR0l_TVeYHAwuZkQ0VIrwh_dyy-CouduZRXUn5Pq9HZsWxm9f805wAYDuP51v9O47uB-yvHTLN9bt1M5MJRDDjhorZdXaJYAqE5WXJYpX1gN-d32M94xs_Zho1z-MWz1pTDbBpN5Pa6PpZzQPiiHHNVg" />
-                <div className="absolute inset-0 bg-gradient-to-t from-slate-950/80 to-transparent"></div>
-              </div>
-              <div className="flex items-center space-x-4 mb-stack-md">
-                <Trophy className="w-9 h-9 text-secondary-fixed" />
-                <h3 className="font-headline-md text-headline-md text-slate-100 group-hover:text-amber-300 transition-colors font-bold drop-shadow-sm">BPC</h3>
-              </div>
-              <p className="font-body-md text-slate-200/90 leading-relaxed">Business Plan Competition for the visionary innovators of tomorrow.</p>
-            </div>
-            
-            {/* BCC (Duplicate) */}
-            <div className="bg-slate-950/45 backdrop-blur-lg rounded-2xl p-stack-lg border border-white/10 shadow-[0_4px_20px_rgba(0,0,0,0.4)] hover:border-white/20 glow-effect group cursor-pointer w-[300px] md:w-[400px] flex-shrink-0 flex flex-col transition-all duration-300">
-              <div className="w-full h-48 mb-6 rounded-xl overflow-hidden relative">
-                <img alt="Coding Star Asset" className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700" src="https://lh3.googleusercontent.com/aida-public/AB6AXuBT34BW1G6FIxmna9OObfcdR6k-JqHGyvI4SXJuon72hNRolLDn8PSydUqgSEubDSfoHqM02rlgCmYwXjPaE12RpE1UxRoz0UTOEZcvjOYH_I2bM8DQsDAlXfg0SUeYbOTeV9t-c0nOu491AB6yA3x-8g0Q595SklI2hqUldzj3ejChvruxUdtm9F8UfbqGvael20gw8gVxVwwQSqwaDmVg0Xlaq0jqz4ywXXmrOYRIKi9pre6dAEUuesEdsrBTJngLVA" />
-                <div className="absolute inset-0 bg-gradient-to-t from-slate-950/80 to-transparent"></div>
-              </div>
-              <div className="flex items-center space-x-4 mb-stack-md">
-                <Trophy className="w-9 h-9 text-secondary-fixed" />
-                <h3 className="font-headline-md text-headline-md text-slate-100 group-hover:text-amber-300 transition-colors font-bold drop-shadow-sm">BCC</h3>
-              </div>
-              <p className="font-body-md text-slate-200/90 leading-relaxed">Coding challenges that push the boundaries of logical space.</p>
-            </div>
-            
-            {/* Seminar (Duplicate) */}
+            {/* Entrepreneurship Seminar (Duplicate) */}
             <div className="bg-slate-950/45 backdrop-blur-lg rounded-2xl p-stack-lg border border-white/10 shadow-[0_4px_20px_rgba(0,0,0,0.4)] hover:border-white/20 glow-effect group cursor-pointer w-[300px] md:w-[400px] flex-shrink-0 flex flex-col transition-all duration-300">
               <div className="w-full h-48 mb-6 rounded-xl overflow-hidden relative">
                 <img alt="Bright Constellation Komet" className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCCGc76to5NhOWrEo3N9DA2yy5BfUrSoNUfxEDdsPjNLpbbjUXdP1PxkqIV5s6BsZ2Uayrz-dX9GOEuj39b9o7GZfa5b4IquifuCfANjthtmiUuqD5yySKD_52YVN_C222iTp7bsuaIPo0C_GxUASqW-UbEbNdl3cx0qlQNrfMfUv4KtS7U6_RVLmfgVuErxnQAcQeSJ4qeW1c4R0DEVHdkKqKmwa7bgqHMsjOB8qaJPHdLYbK4yLxKIJySqD9SLs6y3A" />
