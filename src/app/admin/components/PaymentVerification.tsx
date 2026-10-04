@@ -114,7 +114,7 @@ export default function PaymentVerification({ onTransactionUpdated }: PaymentVer
           return;
         }
 
-        const rawStatus = (c.payment_status || "pending").toLowerCase();
+        const rawStatus = (c.payment_status || "pending").trim().toLowerCase();
         const status: "Pending" | "Verified" | "Rejected" =
           rawStatus === "verified" ? "Verified" : rawStatus === "rejected" ? "Rejected" : "Pending";
 
@@ -178,7 +178,7 @@ export default function PaymentVerification({ onTransactionUpdated }: PaymentVer
           return;
         }
 
-        const rawStatus = (f.payment_status || "pending").toLowerCase();
+        const rawStatus = (f.payment_status || "pending").trim().toLowerCase();
         const status: "Pending" | "Verified" | "Rejected" =
           rawStatus === "verified" ? "Verified" : rawStatus === "rejected" ? "Rejected" : "Pending";
 
@@ -218,7 +218,7 @@ export default function PaymentVerification({ onTransactionUpdated }: PaymentVer
           (tx.source_id && (handledCfrIds.has(tx.source_id) || handledFestIds.has(tx.source_id)));
 
         if (!isHandled) {
-          const rawStatus = (tx.status || "Pending").toLowerCase();
+          const rawStatus = (tx.status || "Pending").trim().toLowerCase();
           const status: "Pending" | "Verified" | "Rejected" =
             rawStatus === "verified" ? "Verified" : rawStatus === "rejected" ? "Rejected" : "Pending";
 

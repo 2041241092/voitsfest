@@ -84,23 +84,88 @@ export default function FestivalDatabase() {
 
   const supabase = createClient();
 
-  // 1. Fetch records ordered by created_at descending
+  // Exact server-side tab counts to eliminate client-side array truncation
+  const [tabCounts, setTabCounts] = useState<{
+    all: number;
+    pending: number;
+    verified: number;
+    rejected: number;
+  }>({
+    all: 0,
+    pending: 0,
+    verified: 0,
+    rejected: 0,
+  });
+
+  const fetchTabCounts = useCallback(async () => {
+    try {
+      const [allRes, pendingRes, verifiedRes, rejectedRes] = await Promise.all([
+        supabase
+          .from("festival_registrations")
+          .select("*", { count: "exact", head: true }),
+        supabase
+          .from("festival_registrations")
+          .select("*", { count: "exact", head: true })
+          .ilike("payment_status", "pending"),
+        supabase
+          .from("festival_registrations")
+          .select("*", { count: "exact", head: true })
+          .ilike("payment_status", "verified"),
+        supabase
+          .from("festival_registrations")
+          .select("*", { count: "exact", head: true })
+          .ilike("payment_status", "rejected"),
+      ]);
+
+      setTabCounts({
+        all: allRes.count ?? 0,
+        pending: pendingRes.count ?? 0,
+        verified: verifiedRes.count ?? 0,
+        rejected: rejectedRes.count ?? 0,
+      });
+    } catch (err) {
+      console.error("Error fetching exact tab counts for Festival:", err);
+    }
+  }, [supabase]);
+
+  // 1. Fetch records ordered by created_at descending without truncation
   const fetchRegistrations = useCallback(async () => {
     setLoading(true);
     setErrorMessage(null);
     try {
-      const { data, error } = await supabase
-        .from("festival_registrations")
-        .select("*")
-        .order("created_at", { ascending: false });
+      fetchTabCounts();
 
-      if (error) {
-        console.error("Error fetching festival_registrations:", error);
-        setErrorMessage("Gagal memuat data Festival: " + error.message);
-        setRegistrations([]);
-      } else {
-        setRegistrations(data || []);
+      const PAGE_SIZE = 1000;
+      let allRows: FestivalRegistration[] = [];
+      let from = 0;
+      let hasMore = true;
+
+      while (hasMore) {
+        const { data, error } = await supabase
+          .from("festival_registrations")
+          .select("*")
+          .order("created_at", { ascending: false })
+          .range(from, from + PAGE_SIZE - 1);
+
+        if (error) {
+          console.error("Error fetching festival_registrations:", error);
+          setErrorMessage("Gagal memuat data Festival: " + error.message);
+          break;
+        }
+
+        if (data && data.length > 0) {
+          allRows.push(...data);
+          if (data.length < PAGE_SIZE) {
+            hasMore = false;
+          } else {
+            from += PAGE_SIZE;
+          }
+        } else {
+          hasMore = false;
+        }
       }
+
+      setRegistrations(allRows);
     } catch (err: any) {
       console.error("Unexpected error in fetchRegistrations:", err);
       setErrorMessage("Terjadi kesalahan jaringan saat mengambil data.");
@@ -108,7 +173,7 @@ export default function FestivalDatabase() {
     } finally {
       setLoading(false);
     }
-  }, [supabase]);
+  }, [supabase, fetchTabCounts]);
 
   // Initial fetch
   useEffect(() => {
@@ -416,28 +481,37 @@ export default function FestivalDatabase() {
     setTimeout(() => setCopiedId(null), 2000);
   };
 
-  // Counts for tabs
+  // Counts for tabs (using server-side exact counts)
   const counts = useMemo(() => {
+    if (tabCounts.all > 0 || tabCounts.pending > 0 || tabCounts.verified > 0 || tabCounts.rejected > 0) {
+      return tabCounts;
+    }
+
     let pending = 0;
     let verified = 0;
     let rejected = 0;
 
     registrations.forEach(r => {
-      const s = (r.payment_status || "").toLowerCase();
+      const s = (r.payment_status || "").trim().toLowerCase();
       if (s === "pending") pending++;
       else if (s === "verified") verified++;
       else if (s === "rejected") rejected++;
     });
 
-    return { all: registrations.length, pending, verified, rejected };
-  }, [registrations]);
+    return {
+      all: tabCounts.all || registrations.length,
+      pending: tabCounts.pending || pending,
+      verified: tabCounts.verified || verified,
+      rejected: tabCounts.rejected || rejected
+    };
+  }, [tabCounts, registrations]);
 
   // Filtered and Searched data
   const filteredData = useMemo(() => {
     return registrations.filter(r => {
-      // 1. Status Filter
+      // 1. Status Filter with normalized trimming & lowercasing
       if (filter !== "all") {
-        const s = (r.payment_status || "").toLowerCase();
+        const s = (r.payment_status || "").trim().toLowerCase();
         if (filter === "pending" && s !== "pending") return false;
         if (filter === "verified" && s !== "verified") return false;
         if (filter === "rejected" && s !== "rejected") return false;

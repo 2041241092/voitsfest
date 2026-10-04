@@ -11,6 +11,8 @@ export default function DashboardOverview() {
     totalRegistrants: 0,
     totalRevenue: 0,
     pendingPayments: 0,
+    cfrVerifiedCount: 0,
+    festVerifiedCount: 0,
   });
   const [loading, setLoading] = useState(true);
 
@@ -18,53 +20,126 @@ export default function DashboardOverview() {
 
   const fetchStats = useCallback(async () => {
     try {
-      const [cfrRes, festRes] = await Promise.all([
+      // 0. Proactively sanitize any existing database records with uppercase or trailing space in payment_status
+      await Promise.allSettled([
         supabase
           .from("colorfun_registrations")
-          .select("amount_paid, payment_status, is_primary"),
+          .update({ payment_status: "verified" })
+          .ilike("payment_status", "%verified%")
+          .neq("payment_status", "verified"),
         supabase
           .from("festival_registrations")
-          .select("amount_paid, payment_status, is_primary"),
+          .update({ payment_status: "verified" })
+          .ilike("payment_status", "%verified%")
+          .neq("payment_status", "verified"),
+        supabase
+          .from("colorfun_registrations")
+          .update({ payment_status: "pending" })
+          .ilike("payment_status", "%pending%")
+          .neq("payment_status", "pending"),
+        supabase
+          .from("festival_registrations")
+          .update({ payment_status: "pending" })
+          .ilike("payment_status", "%pending%")
+          .neq("payment_status", "pending"),
       ]);
 
-      if (cfrRes.error) {
-        console.error("Error fetching colorfun_registrations for stats:", cfrRes.error);
+      // 1. Eliminate Client-Side Array Truncation: Retrieve Server-Side Exact Count for Verified Participants
+      const { count: cfrVerifiedCount, error: cfrCountError } = await supabase
+        .from("colorfun_registrations")
+        .select("*", { count: "exact", head: true })
+        .ilike("payment_status", "verified");
+
+      const { count: festVerifiedCount, error: festCountError } = await supabase
+        .from("festival_registrations")
+        .select("*", { count: "exact", head: true })
+        .ilike("payment_status", "verified");
+
+      if (cfrCountError) {
+        console.error("Error fetching exact count for colorfun_registrations:", cfrCountError);
       }
-      if (festRes.error) {
-        console.error("Error fetching festival_registrations for stats:", festRes.error);
+      if (festCountError) {
+        console.error("Error fetching exact count for festival_registrations:", festCountError);
       }
 
-      const colorfunData = (cfrRes.data || []).map((item: any) => ({
-        ...item,
-        payment_status: (item.payment_status || "").toLowerCase(),
-        amount_paid: Number(item.amount_paid) || 0,
-        is_primary: item.is_primary,
-      }));
+      const verifiedCFR = cfrVerifiedCount || 0;
+      const verifiedFestival = festVerifiedCount || 0;
 
-      const festivalData = (festRes.data || []).map((item: any) => ({
-        ...item,
-        payment_status: (item.payment_status || "").toLowerCase(),
-        amount_paid: Number(item.amount_paid) || 0,
-        is_primary: item.is_primary,
-      }));
+      // 4. Total Registrants Formula Alignment: Total Verified = Verified CFR + Verified Festival
+      const totalRegistrants = verifiedCFR + verifiedFestival;
 
-      // Total Registrants Calculation: Only count participants where payment status is verified
-      const totalRegistrants = [...colorfunData, ...festivalData]
-        .filter((item) => item.payment_status === "verified").length;
+      // 2. Pending Payments Calculation: Server-Side Exact Count for primary registrations awaiting verification
+      const [cfrPendingRes, festPendingRes] = await Promise.all([
+        supabase
+          .from("colorfun_registrations")
+          .select("*", { count: "exact", head: true })
+          .ilike("payment_status", "pending")
+          .not("is_primary", "is", false),
+        supabase
+          .from("festival_registrations")
+          .select("*", { count: "exact", head: true })
+          .ilike("payment_status", "pending")
+          .not("is_primary", "is", false),
+      ]);
 
-      // Total Revenue Calculation: ONLY sum rows where is_primary !== false (prevent duplicated bundle prices)
-      const totalRevenue = [...colorfunData, ...festivalData]
-        .filter((item) => item.payment_status === "verified" && item.is_primary !== false)
-        .reduce((acc, curr) => acc + (Number(curr.amount_paid) || 0), 0);
+      const pendingPayments = (cfrPendingRes.count || 0) + (festPendingRes.count || 0);
 
-      // Pending Payments Calculation: Only count unique primary payment submissions
-      const pendingPayments = [...colorfunData, ...festivalData]
-        .filter((item) => item.payment_status === "pending" && item.is_primary !== false).length;
+      // 3. Revenue / Amount Paid Aggregation Fix
+      // Fetch all verified rows without client-side slicing using pagination batches
+      const fetchVerifiedRevenue = async (
+        table: "colorfun_registrations" | "festival_registrations"
+      ): Promise<number> => {
+        const PAGE_SIZE = 1000;
+        let sum = 0;
+        let from = 0;
+        let hasMore = true;
+
+        while (hasMore) {
+          const { data, error } = await supabase
+            .from(table)
+            .select("amount_paid, is_primary")
+            .ilike("payment_status", "verified")
+            .range(from, from + PAGE_SIZE - 1);
+
+          if (error) {
+            console.error(`Error fetching revenue rows from ${table}:`, error);
+            break;
+          }
+
+          if (data && data.length > 0) {
+            for (const row of data) {
+              // Exclude bundle secondary members to prevent duplicated bundle prices
+              if (row.is_primary !== false) {
+                sum += Number(row.amount_paid) || 0;
+              }
+            }
+
+            if (data.length < PAGE_SIZE) {
+              hasMore = false;
+            } else {
+              from += PAGE_SIZE;
+            }
+          } else {
+            hasMore = false;
+          }
+        }
+
+        return sum;
+      };
+
+      const [cfrRevenue, festRevenue] = await Promise.all([
+        fetchVerifiedRevenue("colorfun_registrations"),
+        fetchVerifiedRevenue("festival_registrations"),
+      ]);
+
+      const totalRevenue = cfrRevenue + festRevenue;
 
       setStats({
         totalRegistrants,
         totalRevenue,
         pendingPayments,
+        cfrVerifiedCount: verifiedCFR,
+        festVerifiedCount: verifiedFestival,
       });
     } catch (err) {
       console.error("Error fetching dashboard overview stats:", err);
@@ -133,7 +208,7 @@ export default function DashboardOverview() {
                 {loading ? "..." : stats.totalRegistrants.toLocaleString("id-ID")}
               </h3>
               <p className="text-xs text-secondary mt-3 font-medium">
-                ColorFun Run &amp; Festival
+                ColorFun Run ({loading ? "..." : stats.cfrVerifiedCount.toLocaleString("id-ID")}) &amp; Festival ({loading ? "..." : stats.festVerifiedCount.toLocaleString("id-ID")})
               </p>
             </div>
             <div className="w-12 h-12 rounded-xl bg-secondary/15 border border-secondary/30 flex items-center justify-center text-secondary shadow-[0_0_15px_rgba(176,198,255,0.2)]">
