@@ -114,7 +114,7 @@ export default async function ColorFunRun() {
               <ul className="space-y-4 font-poppins text-sm text-slate-200">
                 <li className="flex items-start gap-3">
                   <span className="mt-1.5 h-1.5 w-6 shrink-0 rounded-full bg-yellow-400" />
-                  <span><strong className="text-white">Jalur lari</strong> &mdash; Start dan Finish di sisi barat laut kampus ITS.</span>
+                  <span><strong className="text-white">Jalur lari</strong> &mdash; Start dan Finish</span>
                 </li>
                 <li className="flex items-start gap-3">
                   <span className="mt-0.5 h-4 w-4 shrink-0 rounded-full bg-blue-600 border-2 border-white" />
