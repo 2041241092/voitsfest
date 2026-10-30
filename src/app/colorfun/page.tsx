@@ -52,14 +52,14 @@ export default async function ColorFunRun() {
         {/* Hero Section */}
         <section className="relative min-h-[921px] flex items-center justify-center overflow-hidden px-margin-desktop max-md:px-margin-mobile py-section-gap">
           <div className="relative z-10 text-center flex flex-col items-center max-w-4xl mx-auto mt-16 w-full">
-            <div className="glass-card px-6 py-2 rounded-full mb-stack-lg inline-block border border-primary-container/30">
-              <span className="font-poppins text-label-sm text-primary-container uppercase tracking-[0.2em]">Spark the momentum</span>
+            <div className="px-6 py-2 rounded-full mb-stack-lg inline-block bg-surface/30 backdrop-blur-sm border border-white/5 shadow-lg">
+              <span className="font-poppins text-label-sm text-primary-fixed-dim uppercase tracking-[0.2em]">Spark the momentum</span>
             </div>
             
             <CustomHeading 
               as="h1" 
               text="COLORFUN RUN" 
-              className="font-headline-lg text-display-lg max-md:font-headline-lg-mobile max-md:text-headline-lg-mobile text-primary-fixed mb-stack-md glowing-text uppercase floating-element" 
+              className="font-headline-lg text-display-lg max-md:font-headline-lg-mobile max-md:text-headline-lg-mobile text-primary-fixed-dim mb-stack-md glowing-text uppercase floating-element" 
             />
             
             {/* Official Event Description */}
@@ -109,7 +109,7 @@ export default async function ColorFunRun() {
               />
             </a>
 
-            <div className="glass-card rounded-3xl p-6 border border-white/10 text-left">
+            <div className="rounded-3xl p-6 bg-surface/30 backdrop-blur-sm border border-white/5 shadow-lg text-left">
               <h3 className="font-poppins text-lg font-semibold text-primary-fixed uppercase tracking-wider mb-4">Keterangan</h3>
               <ul className="space-y-4 font-poppins text-sm text-slate-200">
                 <li className="flex items-start gap-3">
