@@ -81,6 +81,59 @@ export default async function ColorFunRun() {
           </div>
         </section>
 
+        {/* Route Map */}
+        <section className="py-section-gap px-margin-desktop max-md:px-margin-mobile max-w-container-max mx-auto mb-section-gap relative" id="rute">
+          <div className="text-center mb-stack-lg relative z-10">
+            <CustomHeading
+              as="h2"
+              text="RUTE"
+              className="font-headline-lg text-headline-lg max-md:font-headline-lg-mobile max-md:text-headline-lg-mobile text-primary-fixed-dim mb-stack-sm"
+            />
+            <p className="font-poppins text-body-lg text-primary uppercase tracking-[0.3em] opacity-80">Colorfun run 5K &middot; Kampus ITS</p>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-[3fr_2fr] gap-gutter items-start relative z-10">
+            <a
+              href="/assets/img/cfr-route.webp"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="block glass-card rounded-3xl p-3 border border-white/10 overflow-hidden"
+            >
+              <Image
+                src="/assets/img/cfr-route.webp"
+                alt="Peta rute VOITS ColorFun Run di kampus ITS Surabaya"
+                width={696}
+                height={841}
+                className="w-full h-auto rounded-2xl"
+                sizes="(max-width: 1024px) 100vw, 60vw"
+              />
+            </a>
+
+            <div className="glass-card rounded-3xl p-6 border border-white/10 text-left">
+              <h3 className="font-poppins text-lg font-semibold text-primary-fixed uppercase tracking-wider mb-4">Keterangan</h3>
+              <ul className="space-y-4 font-poppins text-sm text-slate-200">
+                <li className="flex items-start gap-3">
+                  <span className="mt-1.5 h-1.5 w-6 shrink-0 rounded-full bg-yellow-400" />
+                  <span><strong className="text-white">Jalur lari</strong> &mdash; Start dan Finish di sisi barat laut kampus ITS.</span>
+                </li>
+                <li className="flex items-start gap-3">
+                  <span className="mt-0.5 h-4 w-4 shrink-0 rounded-full bg-blue-600 border-2 border-white" />
+                  <span><strong className="text-white">TP 1 &ndash; TP 9</strong> &mdash; Titik pos di sepanjang rute.</span>
+                </li>
+                <li className="flex items-start gap-3">
+                  <span className="mt-0.5 h-4 w-4 shrink-0 rounded-full bg-blue-600 border-2 border-white" />
+                  <span><strong className="text-white">WS 1 &amp; WS 2</strong> &mdash; Water station.</span>
+                </li>
+                <li className="flex items-start gap-3">
+                  <span className="mt-0.5 h-4 w-4 shrink-0 rounded-full bg-red-600 border-2 border-white" />
+                  <span><strong className="text-white">Rawan</strong> &mdash; Titik rawan, harap berhati-hati dan ikuti arahan panitia.</span>
+                </li>
+              </ul>
+              <p className="mt-6 font-poppins text-xs text-slate-400">Klik peta untuk melihat ukuran penuh.</p>
+            </div>
+          </div>
+        </section>
+
         {/* Cosmic Memories Grid */}
         <section className="py-section-gap px-margin-desktop max-md:px-margin-mobile max-w-container-max mx-auto rounded-3xl border border-white/5 relative overflow-hidden bg-surface-container-lowest/20" id="tickets">
           <div className="absolute top-0 right-0 w-96 h-96 bg-primary-container/5 rounded-full blur-[100px] -translate-y-1/2 translate-x-1/2"></div>
